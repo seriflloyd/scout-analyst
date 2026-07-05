@@ -1,0 +1,13 @@
+anthropic
+python-dotenv
+pandas
+numpy
+scipy
+statsmodels
+scikit-learn
+matplotlib
+langgraph
+statsbombpy
+kaggle
+pytest
+requests
