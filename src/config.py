@@ -1,0 +1,13 @@
+MODEL_EXPLORER = "claude-haiku-4-5"
+MODEL_SCOUT    = "claude-haiku-4-5"
+MODEL_CRITIC   = "claude-haiku-4-5"
+MODEL_WRITER   = "claude-haiku-4-5"
+
+MAX_TOOL_CALLS   = 10
+MAX_REVISIONS    = 2
+MAX_TOKENS       = 1200
+MAX_TOKENS_WRITER = 3500
+
+MIN_MINUTES      = 900
+SHRINKAGE_K      = 900
+MIN_MARKET_VALUE = 100000

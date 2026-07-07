@@ -1,6 +1,7 @@
 anthropic
 python-dotenv
 pandas
+pyarrow
 numpy
 scipy
 statsmodels
