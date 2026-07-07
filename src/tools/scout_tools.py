@@ -22,16 +22,51 @@ def shrink_to_group_mean(df: pd.DataFrame, metric: str, k: int = 900,
     return out
 
 
-def value_residuals(df: pd.DataFrame, perf_col: str,
-                    value_col: str = "market_value"):
-    """log(piyasa degeri) ~ performans regresyonu.
-    NEGATIF artik = piyasa degeri, performansin ongordugunden DUSUK = degerinin altinda oyuncu."""
-    d = df.dropna(subset=[perf_col, value_col]).copy()
-    d = d[d[value_col] > 0]
-    X = sm.add_constant(d[[perf_col]])
+def value_residuals(df: pd.DataFrame, perf_col: str = "goals_per90",
+                    value_col: str = "market_value_in_eur"):
+    """v2: log(piyasa degeri) ~ perf_col + age + age^2 + pozisyon kukla
+    degiskenleri + lig kukla degiskenleri + log(dakika) (statsmodels OLS).
+
+    age, date_of_birth ile o oyuncu-sezonun bitis tarihi (season_end sutunu
+    varsa o kullanilir, yoksa season'dan 31 Aralik olarak turetilir) arasindaki
+    farktan yil cinsinden hesaplanir (look-ahead bias'siz, sezon ici performansla
+    ayni doneme ait yas).
+
+    NEGATIF value_residual = oyuncunun piyasa degeri, modelin performans ve
+    yas/lig/pozisyona gore ongordugunden DUSUK -> "degerinin altinda"
+    (undervalued) oyuncu adayi. POZITIF artik ise performansina gore piyasada
+    ASIRI DEGERLI oyuncu demektir.
+
+    dusuk_sinyal_guvenilirligi: performans metrigi (perf_col) 0 olan
+    oyuncularda deger artigi buyuk olcude yas/dakika/lig tarafindan
+    aciklanir, gercek performans sinyali degil - bu sutun Elestirmen
+    ajaninin bu farki ayirt etmesini saglar.
+
+    Donus: (value_residual'a gore artan sirali DataFrame, sm.OLS fit sonucu).
+    Ikinci eleman tam bir statsmodels RegressionResultsWrapper oldugundan
+    model.rsquared, model.params ve model.summary() dogrudan erisilebilir.
+    """
+    required = [perf_col, "date_of_birth", "position", "league", "minutes", value_col]
+    d = df.dropna(subset=required).copy()
+    d = d[(d[value_col] > 0) & (d["minutes"] > 0)]
+
+    if "season_end" in d.columns:
+        season_end = pd.to_datetime(d["season_end"])
+    else:
+        season_end = pd.to_datetime(d["season"].astype(int).astype(str) + "-12-31")
+
+    d["age"] = (season_end - pd.to_datetime(d["date_of_birth"])).dt.days / 365.25
+    d["age_sq"] = d["age"] ** 2
+    d["log_minutes"] = np.log(d["minutes"])
+
+    dummies = pd.get_dummies(d[["position", "league"]], drop_first=True, dtype=float)
+    X = pd.concat([d[[perf_col, "age", "age_sq", "log_minutes"]], dummies], axis=1)
+    X = sm.add_constant(X)
     y = np.log(d[value_col])
+
     model = sm.OLS(y, X).fit()
     d["value_residual"] = model.resid
+    d["dusuk_sinyal_guvenilirligi"] = d[perf_col] == 0
     return d.sort_values("value_residual"), model
 
 

@@ -73,12 +73,14 @@ def build_eligible_pool(
     """Scouting icin uygun oyuncu-sezon havuzunu olusturur.
 
     Adimlar: top-5 lige ait mac katilimlarini alip oyuncu-sezon bazinda
-    toplar; her oyuncu-sezona, o sezonun bitisine (31 Aralik) kadar bilinen
+    toplar; her oyuncu-sezona en sik oynadigi competition_id'yi ("league")
+    ekler; her oyuncu-sezona, o sezonun bitisine (31 Aralik) kadar bilinen
     en guncel player_valuations kaydini (merge_asof, direction="backward")
     esler - bu sekilde sezon sonrasindaki degerler kullanilmayarak
     look-ahead bias engellenir; taban-deger artefaktlarini (< MIN_MARKET_VALUE)
     ve son n_seasons disindaki sezonlari eler; dakika esigini uygular;
-    sonucu parquet olarak kaydeder.
+    goals_per90 / assists_per90 sutunlarini ekler; sonucu parquet olarak
+    kaydeder.
     """
     appearances = pd.read_csv(appearances_path)
     players = pd.read_csv(players_path)
@@ -89,6 +91,15 @@ def build_eligible_pool(
     appearances = appearances[appearances["competition_id"].isin(top5_ids)].copy()
 
     player_season = aggregate_player_season(appearances)
+
+    appearances["season"] = pd.to_datetime(appearances["date"]).dt.year
+    league_mode = (
+        appearances.groupby(["player_id", "season"])["competition_id"]
+        .agg(lambda s: s.mode().iloc[0])
+        .rename("league")
+        .reset_index()
+    )
+    player_season = player_season.merge(league_mode, on=["player_id", "season"], how="left")
 
     last_seasons = sorted(player_season["season"].unique())[-n_seasons:]
     player_season = player_season[player_season["season"].isin(last_seasons)].copy()
@@ -121,6 +132,8 @@ def build_eligible_pool(
     ]]
     pool = pool.merge(player_meta, on="player_id", how="left")
     pool = pool.drop(columns=["date"]).reset_index(drop=True)
+
+    pool = add_per90(pool)
 
     output_file = Path(output_path)
     output_file.parent.mkdir(parents=True, exist_ok=True)
