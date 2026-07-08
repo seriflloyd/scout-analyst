@@ -45,6 +45,10 @@ def value_residuals(df: pd.DataFrame, perf_col: str = "goals_per90",
     Donus: (value_residual'a gore artan sirali DataFrame, sm.OLS fit sonucu).
     Ikinci eleman tam bir statsmodels RegressionResultsWrapper oldugundan
     model.rsquared, model.params ve model.summary() dogrudan erisilebilir.
+
+    perf_col secimi: goals_per90 piyasa-referans modeli icin, npxg_per90 (veya
+    benzer sansa-gore-duzeltilmis metrikler) asil scouting sinyali icin tercih
+    edilir - dusuk R-squared burada zayiflik degil, aranan sinyalin isaretidir.
     """
     required = [perf_col, "date_of_birth", "position", "league", "minutes", value_col]
     d = df.dropna(subset=required).copy()

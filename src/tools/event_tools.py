@@ -144,3 +144,27 @@ def compute_npxg_per90(events_df: pd.DataFrame, minutes_df: pd.DataFrame) -> pd.
     out = npxg.merge(minutes_df[["player_id", "minutes"]], on="player_id", how="left")
     out["npxg_per90"] = out["npxg"] / out["minutes"] * 90
     return out.sort_values("npxg_per90", ascending=False).reset_index(drop=True)
+
+
+def compute_goals_per90(events_df: pd.DataFrame, minutes_df: pd.DataFrame) -> pd.DataFrame:
+    """Oyuncu basina gercek gol/90 (penaltiler dahil - tum atilan goller,
+    90 dakikaya normalize). npxg_per90'in aksine penaltiler haric tutulmaz,
+    cunku bu ham gerceklesen gol sayisidir (goals_per90 sutunuyla ayni
+    tanim: data_tools.aggregate_player_season'daki 'goals' de tum golleri
+    sayar).
+
+    events_df: birden fazla macin ham event verisi (get_events_cached ile
+    indirilip concat edilmis); 'type', 'player_id', 'player', 'shot_outcome'
+    sutunlarini icermelidir.
+    minutes_df: compute_player_minutes() ciktisi - player_id basina toplam
+    oynanan dakika (ayni mac kumesi uzerinden).
+    """
+    goal_shots = events_df[(events_df["type"] == "Shot") & (events_df["shot_outcome"] == "Goal")]
+    goals = (
+        goal_shots.groupby(["player_id", "player"], as_index=False)
+        .size()
+        .rename(columns={"size": "goals", "player": "player_name"})
+    )
+    out = goals.merge(minutes_df[["player_id", "minutes"]], on="player_id", how="left")
+    out["goals_per90"] = out["goals"] / out["minutes"] * 90
+    return out.sort_values("goals_per90", ascending=False).reset_index(drop=True)
