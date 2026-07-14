@@ -47,6 +47,40 @@ def test_fuzzy_match_players_rejects_tied_candidates():
     assert result.iloc[0]["player_id"] is None or pd.isna(result.iloc[0]["player_id"])
 
 
+def test_fuzzy_match_players_alt_names_resolves_common_surname_collision():
+    """'Fernando Llorente Torres' (gercek adi Fernando Llorente) tam legal
+    isminde HEM 'Torres' HEM 'Llorente' soyismini tasidigindan, aday
+    havuzundaki iki FARKLI gercek oyuncuya ('Fernando Torres' ve 'Fernando
+    Llorente') skor=100 ile ayni anda catisir - alt_names verilmeden bu
+    catisma (tie_margin) yuzunden reddedilmeli. alt_names (StatsBomb
+    player_nickname, orn. 'Fernando Llorente') verildiginde ise sadece dogru
+    adaya net sekilde eslesmeli, cunku kisa/dogru nickname'de rakip soyisim
+    (Torres) artik yer almiyor."""
+    candidates = pd.DataFrame({
+        "player_id": [1, 2],
+        "name": ["Fernando Torres", "Fernando Llorente"],
+    })
+    source_names = ["Fernando Llorente Torres"]
+
+    without_alt = match_tools.fuzzy_match_players(source_names, candidates, score_threshold=90.0)
+    assert without_alt.iloc[0]["player_id"] is None or pd.isna(without_alt.iloc[0]["player_id"])
+
+    alt_names = {"Fernando Llorente Torres": "Fernando Llorente"}
+    with_alt = match_tools.fuzzy_match_players(
+        source_names, candidates, score_threshold=90.0, alt_names=alt_names
+    )
+    assert with_alt.iloc[0]["player_id"] == 2
+
+
+def test_get_player_nicknames_skips_missing_and_blank():
+    lineups_df = pd.DataFrame({
+        "player_id": [1, 1, 2, 3],
+        "player_nickname": ["Fernando Torres", "Fernando Torres", None, "  "],
+    })
+    nicknames = match_tools.get_player_nicknames(lineups_df)
+    assert nicknames == {1: "Fernando Torres"}
+
+
 def test_demote_ambiguous_matches_rejects_many_to_one_collisions():
     """Tek kelimelik bir Transfermarkt adi (orn. 'Pedro'), onu tam adinin
     icinde barindiran birden fazla FARKLI StatsBomb oyuncusuyla skor=100

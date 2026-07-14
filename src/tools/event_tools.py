@@ -44,9 +44,13 @@ def get_lineups_cached(match_id: int, cache_dir: str = "data/raw/statsbomb/lineu
     dener), her oyuncunun pozisyon/sure segmentlerini (positions listesi)
     duzlestirip cache'ler.
 
-    Donen tablo: match_id, team, player_id, player_name, position, from, to,
-    from_period, to_period. 'to' bos (None) ise oyuncu o segmentin ait oldugu
-    periyodun sonuna (veya mac sonuna) kadar sahadadir."""
+    Donen tablo: match_id, team, player_id, player_name, player_nickname,
+    country, position, from, to, from_period, to_period. 'to' bos (None) ise
+    oyuncu o segmentin ait oldugu periyodun sonuna (veya mac sonuna) kadar
+    sahadadir. player_nickname/country, StatsBomb'un oyuncuya ait bilinen kisa
+    ad (orn. 'Fernando Torres') ve uyrugu (match_tools.py'deki isim eslestirme
+    icin - full legal isim yerine kisa ad kullanmak ortak-soyisim
+    catismalarini azaltir, bkz. match_tools.fuzzy_match_players)."""
     cache_path = Path(cache_dir) / f"{match_id}.parquet"
     if cache_path.exists():
         return pd.read_parquet(cache_path)
@@ -62,6 +66,8 @@ def get_lineups_cached(match_id: int, cache_dir: str = "data/raw/statsbomb/lineu
                     "team": team,
                     "player_id": player["player_id"],
                     "player_name": player["player_name"],
+                    "player_nickname": player["player_nickname"],
+                    "country": player["country"],
                     "position": pos["position"],
                     "from": pos["from"],
                     "to": pos["to"],

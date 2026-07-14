@@ -43,7 +43,8 @@ def build_transfermarkt_candidates(players: pd.DataFrame, valuations: pd.DataFra
 
 
 def fuzzy_match_players(source_names: list, candidates: pd.DataFrame, name_col: str = "name",
-                        score_threshold: float = 90.0, tie_margin: float = 1.0) -> pd.DataFrame:
+                        score_threshold: float = 90.0, tie_margin: float = 1.0,
+                        alt_names: dict = None) -> pd.DataFrame:
     """Her source_names elemani (orn. StatsBomb'un tam/dogum adi) icin
     candidates[name_col] (orn. Transfermarkt'in bilinen adi) icinde rapidfuzz
     token_set_ratio ile en iyi eslesmeyi bulur - bu skor, kisa bilinen adin
@@ -58,28 +59,69 @@ def fuzzy_match_players(source_names: list, candidates: pd.DataFrame, name_col: 
     kisi oldugunu ayirt edemez, process.extractOne'in rastgele/sirali sectigi
     taraf sessizce yanlis olabilir.
 
+    alt_names (opsiyonel): {source_name: alt_isim} sozlugu - orn. StatsBomb'un
+    kisa/bilinen adi (player_nickname, bkz. get_player_nicknames()). Once HER
+    ZAMAN tam isimle (src) eslesme denenir (mevcut davranisla birebir ayni,
+    alt_names=None ile sonuc degismez); sadece bu deneme reddedilirse (esik
+    alti VEYA belirsiz/tied) VE bir alt isim varsa, alt isimle AYRI bir
+    deneme yapilir - alt isim de temiz (esik ustu, tied degil) bir sonuc
+    verirse o kullanilir. Alt isim SADECE tek basina denenir (tam isimle
+    BIRLESTIRILMEZ) - cunku full legal isimdeki fazladan soyisim token'lari
+    (orn. 'Fernando Jose Torres Sanz' -> 'Torres') zaten yanlis adaya
+    (baska bir oyuncunun da 'Torres' soyismi tasidigi bir TM kaydina)
+    mukemmel skorla catismis olabilir; bu skoru havuza dahil etmek sorunu
+    tasir. Kisa/dogru nickname (orn. 'Fernando Llorente') bu fazla token'i
+    tasimadigindan catisan adaya artik mukemmel skorla uymaz, dogru aday
+    tek basina one cikar. Ampirik olarak dogrulandi: 267 oyunculuk La Liga
+    2015/16 havuzunda 28 satir sadece bu tur ortak-soyisim catismasindan
+    reddedilmisti (bkz. reep arastirmasi/kesif notlari).
+
     Donen tablo: source_name, player_id, matched_name, score. Reddedilen
     (esik alti veya belirsiz) satirlarda player_id None olur; matched_name/score
     yine de en iyi adayi ve skorunu tasir - tanisal amacli (raporlamada 'neye
     yakin ama esik alti/belirsiz kaldi' gorunsun diye)."""
     choices = candidates[name_col].tolist()
+
+    def best_match(query):
+        top = process.extract(query, choices, scorer=fuzz.token_set_ratio, limit=2)
+        if not top:
+            return None, None, 0.0, False
+        matched_name, score, idx = top[0]
+        candidate_player_id = candidates.iloc[idx]["player_id"]
+        is_tied = len(top) > 1 and (score - top[1][1]) < tie_margin
+        return matched_name, candidate_player_id, score, is_tied
+
     rows = []
     for src in source_names:
-        top_matches = process.extract(src, choices, scorer=fuzz.token_set_ratio, limit=2)
-        if not top_matches:
-            rows.append({"source_name": src, "player_id": None, "matched_name": None, "score": 0.0})
-            continue
-        matched_name, score, idx = top_matches[0]
-        candidate_player_id = candidates.iloc[idx]["player_id"]
-        is_tied = len(top_matches) > 1 and (score - top_matches[1][1]) < tie_margin
-        accepted = score >= score_threshold and not is_tied
+        matched_name, player_id, score, is_tied = best_match(src)
+        accepted = matched_name is not None and score >= score_threshold and not is_tied
+
+        alt = (alt_names or {}).get(src)
+        if not accepted and alt and alt != src:
+            alt_matched_name, alt_player_id, alt_score, alt_is_tied = best_match(alt)
+            alt_accepted = alt_matched_name is not None and alt_score >= score_threshold and not alt_is_tied
+            if alt_accepted:
+                matched_name, player_id, score, accepted = alt_matched_name, alt_player_id, alt_score, True
+
         rows.append({
             "source_name": src,
-            "player_id": candidate_player_id if accepted else None,
+            "player_id": player_id if accepted else None,
             "matched_name": matched_name,
             "score": score,
         })
     return pd.DataFrame(rows)
+
+
+def get_player_nicknames(lineups_df: pd.DataFrame) -> dict:
+    """lineups_df (get_lineups_cached ciktilari concat edilmis) icinden
+    player_id basina bilinen player_nickname'i cikarir. Nickname'i bos/NaN
+    olan oyuncular sozlukte yer almaz (bunlar icin fuzzy_match_players tam
+    isimle eslestirmeye devam eder).
+
+    Donus: {player_id: nickname} sozlugu."""
+    d = lineups_df.dropna(subset=["player_nickname"])
+    d = d[d["player_nickname"].str.strip() != ""]
+    return d.drop_duplicates(subset="player_id").set_index("player_id")["player_nickname"].to_dict()
 
 
 def demote_ambiguous_matches(match_result: pd.DataFrame) -> pd.DataFrame:
@@ -103,10 +145,16 @@ def demote_ambiguous_matches(match_result: pd.DataFrame) -> pd.DataFrame:
 
 def build_statsbomb_value_pool(npxg_df: pd.DataFrame, players: pd.DataFrame, valuations: pd.DataFrame,
                                competition_code: str, season_start: str, season_end: str,
-                               min_market_value: float, score_threshold: float = 90.0):
+                               min_market_value: float, score_threshold: float = 90.0,
+                               nicknames: dict = None):
     """StatsBomb npxG/90 sonuclarini (npxg_df: player_name, npxg, minutes, npxg_per90)
     Transfermarkt oyuncu + piyasa degeri verisiyle isim tabanli fuzzy match ile
     birlestirir.
+
+    nicknames (opsiyonel): {statsbomb_player_id: nickname} sozlugu (bkz.
+    get_player_nicknames()) - verilirse fuzzy_match_players'a alt isim olarak
+    aktarilir, ortak soyisim catismalarini azaltir (bkz. fuzzy_match_players
+    docstring'i).
 
     Donus: (matched_df, unmatched_df).
     matched_df: value_residuals() icin gerekli sutunlari icerir (npxg_per90,
@@ -126,8 +174,16 @@ def build_statsbomb_value_pool(npxg_df: pd.DataFrame, players: pd.DataFrame, val
     # karismamasi icin ayri isimlendirilir.
     source = npxg_df.rename(columns={"player_id": "statsbomb_player_id"})
 
+    alt_names = None
+    if nicknames:
+        alt_names = {
+            row["player_name"]: nicknames[row["statsbomb_player_id"]]
+            for _, row in source.iterrows()
+            if row["statsbomb_player_id"] in nicknames
+        }
+
     match_result = fuzzy_match_players(
-        source["player_name"].tolist(), candidates, score_threshold=score_threshold
+        source["player_name"].tolist(), candidates, score_threshold=score_threshold, alt_names=alt_names
     )
     match_result = demote_ambiguous_matches(match_result)
     merged = source.merge(match_result, left_on="player_name", right_on="source_name", how="left")
