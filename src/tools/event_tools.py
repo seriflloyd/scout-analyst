@@ -159,20 +159,28 @@ def get_primary_position_group(lineups_df: pd.DataFrame, events_df: pd.DataFrame
     return by_group.loc[idx, ["player_id", "position_group"]].reset_index(drop=True)
 
 
-def compute_npxg_per90(events_df: pd.DataFrame, minutes_df: pd.DataFrame) -> pd.DataFrame:
-    """Oyuncu basina npxG/90 (penalti haric beklenen gol, 90 dakikaya normalize).
+# StatsBomb'un 'play_pattern' alani, sutun baslangicini tetikleyen oyun
+# durumunu belirtir. Acik oyun (Regular Play, From Counter, From Keeper) ile
+# set-parca (From Corner, From Free Kick, From Throw In) sutlari farkli
+# beceri/pozisyon profillerini yansitir - set-parca sutlari genelde kafa
+# vurusu/duran topa ozel yetenegi, acik oyun sutlari ise oyun icinde pozisyon
+# bulma/bitiricilik yetenegini olcer. 'From Goal Kick', 'From Kick Off' ve
+# 'Other' kasitli olarak disarida birakilir (cok nadir gorulur, ne acik oyun
+# ne klasik set-parca profiline net oturur).
+_OPEN_PLAY_SHOT_PATTERNS = frozenset({"Regular Play", "From Counter", "From Keeper"})
+_SET_PIECE_SHOT_PATTERNS = frozenset({"From Corner", "From Free Kick", "From Throw In"})
 
-    events_df: birden fazla macin ham event verisi (get_events_cached ile
-    indirilip concat edilmis); 'type', 'player_id', 'player', 'shot_type',
-    'shot_statsbomb_xg' sutunlarini icermelidir.
-    minutes_df: compute_player_minutes() ciktisi - player_id basina toplam
-    oynanan dakika (ayni mac kumesi uzerinden).
 
-    Penaltilar (shot_type == "Penalty") npxG toplamina dahil edilmez, cunku
-    penalti xG'si oyuncunun acik oyun performansini degil sabit bir durumu
-    yansitir.
-    """
-    shots = events_df[(events_df["type"] == "Shot") & (events_df["shot_type"] != "Penalty")]
+def _npxg_per90_for_patterns(events_df: pd.DataFrame, minutes_df: pd.DataFrame,
+                              play_patterns) -> pd.DataFrame:
+    """compute_npxg_per90 ve compute_set_piece_npxg_per90 arasinda paylasilan
+    ortak hesap: verilen play_pattern kumesine giren (penalti haric) sutlardan
+    npxG/90 hesaplar."""
+    shots = events_df[
+        (events_df["type"] == "Shot")
+        & (events_df["shot_type"] != "Penalty")
+        & (events_df["play_pattern"].isin(play_patterns))
+    ]
     npxg = (
         shots.groupby(["player_id", "player"], as_index=False)["shot_statsbomb_xg"]
         .sum()
@@ -181,6 +189,48 @@ def compute_npxg_per90(events_df: pd.DataFrame, minutes_df: pd.DataFrame) -> pd.
     out = npxg.merge(minutes_df[["player_id", "minutes"]], on="player_id", how="left")
     out["npxg_per90"] = out["npxg"] / out["minutes"] * 90
     return out.sort_values("npxg_per90", ascending=False).reset_index(drop=True)
+
+
+def compute_npxg_per90(events_df: pd.DataFrame, minutes_df: pd.DataFrame,
+                        play_pattern_filter=_OPEN_PLAY_SHOT_PATTERNS) -> pd.DataFrame:
+    """Oyuncu basina npxG/90 (penalti haric beklenen gol, 90 dakikaya normalize).
+
+    events_df: birden fazla macin ham event verisi (get_events_cached ile
+    indirilip concat edilmis); 'type', 'player_id', 'player', 'shot_type',
+    'shot_statsbomb_xg', 'play_pattern' sutunlarini icermelidir.
+    minutes_df: compute_player_minutes() ciktisi - player_id basina toplam
+    oynanan dakika (ayni mac kumesi uzerinden).
+
+    Penaltilar (shot_type == "Penalty") npxG toplamina dahil edilmez, cunku
+    penalti xG'si oyuncunun acik oyun performansini degil sabit bir durumu
+    yansitir.
+
+    play_pattern_filter: sadece bu kumedeki 'play_pattern' degerlerine sahip
+    sutlar sayilir. Varsayilan _OPEN_PLAY_SHOT_PATTERNS ({'Regular Play',
+    'From Counter', 'From Keeper'}) - set-parca sutlari (corner/frikik/taca)
+    haric tutulur, cunku bunlar acik oyun bitiricilik sinyalini bulanik-
+    lastirir (bkz. compute_set_piece_npxg_per90 - set-parca kanali ayri
+    raporlanir). Karisik (eski davranis, filtre uygulanmamis) bir sonuc
+    isteniyorsa play_pattern_filter=events_df["play_pattern"].unique()
+    verilebilir.
+    """
+    return _npxg_per90_for_patterns(events_df, minutes_df, play_pattern_filter)
+
+
+def compute_set_piece_npxg_per90(events_df: pd.DataFrame, minutes_df: pd.DataFrame) -> pd.DataFrame:
+    """Oyuncu basina SADECE set-parca npxG/90 (penalti haric, corner/frikik/
+    taca kaynakli sutlar; 90 dakikaya normalize).
+
+    compute_npxg_per90()'in acik-oyun kanaliyla birlikte ikinci bir kanal
+    olarak dusunulmelidir: bir oyuncunun toplam npxg_per90'i buyuk olcude
+    set-parca kaynakliysa (orn. kafa vurusu uzmani bir stoper/forvet), bu
+    fonksiyon o bagimliligi ayri gosterir - acik oyun kanali oyuncunun oyun
+    icindeki bitiricilik/pozisyon bulma yetenegini yansitirken, bu kanal
+    duran top yetenegini yansitir.
+
+    events_df / minutes_df: compute_npxg_per90() ile ayni sekil ve sutunlar.
+    """
+    return _npxg_per90_for_patterns(events_df, minutes_df, _SET_PIECE_SHOT_PATTERNS)
 
 
 def compute_goals_per90(events_df: pd.DataFrame, minutes_df: pd.DataFrame) -> pd.DataFrame:

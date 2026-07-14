@@ -64,6 +64,35 @@ def test_compute_progressive_passes_per90_classifies_known_distances():
     assert len(out) == 5
 
 
+def test_compute_npxg_per90_separates_open_play_from_set_piece():
+    """Ayni oyuncunun biri acik oyun (Regular Play), biri set-parca (From
+    Corner) iki sutu var. compute_npxg_per90() (varsayilan filtre) sadece
+    acik oyun sutunu, compute_set_piece_npxg_per90() sadece set-parca sutunu
+    saymali - ikisi toplaminda TUM (penalti haric) sutlari kapsamali, hicbir
+    sut iki kanalda birden sayilmamali ya da hic sayilmadan kaybolmamali.
+    Penalti (play_pattern='Regular Play' olsa bile shot_type='Penalty') her
+    iki kanaldan da haric tutulmali."""
+    events_df = pd.DataFrame({
+        "type": ["Shot", "Shot", "Shot", "Shot"],
+        "player_id": [1, 1, 1, 1],
+        "player": ["A", "A", "A", "A"],
+        "shot_type": ["Open Play", "Open Play", "Open Play", "Penalty"],
+        "shot_statsbomb_xg": [0.3, 0.2, 0.9, 0.76],
+        "play_pattern": ["Regular Play", "From Corner", "From Counter", "Regular Play"],
+    })
+    minutes_df = pd.DataFrame({
+        "player_id": [1],
+        "player_name": ["A"],
+        "minutes": [900.0],
+    })
+
+    open_play = event_tools.compute_npxg_per90(events_df, minutes_df)
+    set_piece = event_tools.compute_set_piece_npxg_per90(events_df, minutes_df)
+
+    assert open_play.loc[open_play["player_id"] == 1, "npxg"].iloc[0] == 0.3 + 0.9
+    assert set_piece.loc[set_piece["player_id"] == 1, "npxg"].iloc[0] == 0.2
+
+
 def test_get_primary_position_group_uses_minutes_weighted_majority():
     """Bir oyuncu mac icinde kisa sureli 'Left Wing' (Attack) sonra uzun
     sureli 'Right Back' (Defender) oynamissa, dakika agirlikli birincil
