@@ -159,14 +159,21 @@ def get_primary_position_group(lineups_df: pd.DataFrame, events_df: pd.DataFrame
     return by_group.loc[idx, ["player_id", "position_group"]].reset_index(drop=True)
 
 
-# StatsBomb'un 'play_pattern' alani, sutun baslangicini tetikleyen oyun
-# durumunu belirtir. Acik oyun (Regular Play, From Counter, From Keeper) ile
-# set-parca (From Corner, From Free Kick, From Throw In) sutlari farkli
-# beceri/pozisyon profillerini yansitir - set-parca sutlari genelde kafa
-# vurusu/duran topa ozel yetenegi, acik oyun sutlari ise oyun icinde pozisyon
-# bulma/bitiricilik yetenegini olcer. 'From Goal Kick', 'From Kick Off' ve
-# 'Other' kasitli olarak disarida birakilir (cok nadir gorulur, ne acik oyun
-# ne klasik set-parca profiline net oturur).
+# StatsBomb'un 'play_pattern' alani, sutun ait oldugu POSSESSION'in hangi
+# oyun durumundan (restart) baslatildigini belirtir - sutun kendisinin nasil
+# vuruldugunu (kafa/ayak) DEGIL. Ampirik dogrulama (Suarez/Messi/Ronaldo,
+# 380 mac cache'i, shot_body_part dagilimi): 'From Corner'+'From Free Kick'
+# etiketli sutlarin sadece %13.5'i kafa (Head), %86.5'i ayak (Left/Right
+# Foot) - yani bu play_pattern'ler cogunlukla "corner/frikik sonrasi acilan
+# possession icinde baska turlu bir sut" anlamina gelir, "duran topla kafa
+# vurusu" degil (bkz. compute_set_piece_npxg_per90 docstring'i). Yine de acik
+# oyun (Regular Play, From Counter, From Keeper) ile set-parca kaynakli
+# possession'lari ayirmak anlamlidir - bitiricilik orn. bir kontratak
+# aninda mi, yoksa rakibin defansif dizilimi henuz toparlanmamisken bir
+# dead-ball sonrasi mi olustu farkli taktiksel baglamlari yansitir.
+# 'From Goal Kick', 'From Kick Off' ve 'Other' kasitli olarak disarida
+# birakilir (cok nadir gorulur, ne acik oyun ne set-parca possession
+# profiline net oturur).
 _OPEN_PLAY_SHOT_PATTERNS = frozenset({"Regular Play", "From Counter", "From Keeper"})
 _SET_PIECE_SHOT_PATTERNS = frozenset({"From Corner", "From Free Kick", "From Throw In"})
 
@@ -223,10 +230,18 @@ def compute_set_piece_npxg_per90(events_df: pd.DataFrame, minutes_df: pd.DataFra
 
     compute_npxg_per90()'in acik-oyun kanaliyla birlikte ikinci bir kanal
     olarak dusunulmelidir: bir oyuncunun toplam npxg_per90'i buyuk olcude
-    set-parca kaynakliysa (orn. kafa vurusu uzmani bir stoper/forvet), bu
-    fonksiyon o bagimliligi ayri gosterir - acik oyun kanali oyuncunun oyun
-    icindeki bitiricilik/pozisyon bulma yetenegini yansitirken, bu kanal
-    duran top yetenegini yansitir.
+    set-parca kaynakliysa, bu fonksiyon o bagimliligi ayri gosterir.
+
+    DIKKAT - bu kanal "kafa vurusu/duran top yetenegi" DEGIL, "sutun ait
+    oldugu possession'in bir corner/frikik/tacadan baslamis olmasi"
+    anlamina gelir (bkz. _SET_PIECE_SHOT_PATTERNS yorumu). Ampirik olarak
+    (Suarez/Messi/Ronaldo, 380 mac) bu kanaldaki sutlarin %86.5'i ayakla
+    atilmis, sadece %13.5'i kafa - ozellikle 'From Free Kick' sutlarinin
+    cogu muhtemelen dogrudan serbest vurus (elit frikik atan oyuncularda)
+    veya possession devam ederken atilan acik-oyun-tarzi bir sut, klasik
+    "kafa vurusu"ndan cok farkli bir beceri profili. Yorumlarken "bu
+    oyuncunun npxG'si set-parca possession'lara ne kadar bagimli" sorusuna
+    cevap verir, "bu oyuncu ne kadar iyi kafa vurur" sorusuna degil.
 
     events_df / minutes_df: compute_npxg_per90() ile ayni sekil ve sutunlar.
     """
