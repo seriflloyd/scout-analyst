@@ -91,6 +91,20 @@ def build_eligible_pool(
     - is_free_agent_soon: contract_years_remaining <= 0.5 ise True (yarim
       yildan az kalmis, bonservissiz transfer adayi); contract_years_remaining
       NaN ise False (bilinmeyen durum "yakinda bedava" olarak ISARETLENMEZ).
+
+    ONEMLI KISIT: players.csv oyuncu basina TEK (guncel/son bilinen) bir
+    contract_expiration_date tutar - sezona ozgu sozlesme gecmisi YOKTUR.
+    Bu yuzden contract_years_remaining, SADECE havuzdaki EN GUNCEL sezon
+    icin hesaplanir (season == max(kept seasons)); n_seasons penceresindeki
+    daha eski sezonlarda NaN/False birakilir. Aksi halde (eski sezonlar icin
+    de hesaplansaydi) look-ahead bias olurdu: oyuncunun DAHA SONRA imzaladigi
+    bir sozlesmenin bitis tarihi, o oyuncunun cok daha eski bir sezonundaki
+    "kalan sure"si gibi kullanilmis olurdu - ampirik olarak dogrulandi (bkz.
+    reports/contract_years_remaining_zamanlama_sorunu.md): 2015/16 La Liga
+    verisinde bu sekilde hesaplanan degerler 6.9-14 yil araliginda cikiyordu
+    (gercekci bir futbol sozlesmesi suresi degil), cunku season_end'den
+    onceki degil GELECEKTEKI (2023-2030 arasi) bir contract_expiration_date
+    kullaniliyordu.
     """
     appearances = pd.read_csv(appearances_path)
     players = pd.read_csv(players_path)
@@ -151,7 +165,8 @@ def build_eligible_pool(
 
     pool["contract_expiration_date"] = pd.to_datetime(pool["contract_expiration_date"], errors="coerce")
     years_remaining = (pool["contract_expiration_date"] - pool["season_end"]).dt.days / 365.25
-    pool["contract_years_remaining"] = years_remaining.where(years_remaining >= 0)
+    is_latest_season = pool["season"] == max(last_seasons)
+    pool["contract_years_remaining"] = years_remaining.where(years_remaining >= 0).where(is_latest_season)
     pool["is_free_agent_soon"] = (pool["contract_years_remaining"] <= 0.5).fillna(False)
 
     output_file = Path(output_path)
