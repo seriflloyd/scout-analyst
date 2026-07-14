@@ -81,6 +81,16 @@ def build_eligible_pool(
     ve son n_seasons disindaki sezonlari eler; dakika esigini uygular;
     goals_per90 / assists_per90 sutunlarini ekler; sonucu parquet olarak
     kaydeder.
+
+    Ayrica players.csv'deki contract_expiration_date'ten iki sutun turetir:
+    - contract_years_remaining: (contract_expiration_date - season_end) / 365.25.
+      Sozlesme bitis tarihi bilinmiyorsa VEYA season_end'den ONCEYSE (veride
+      tutarsizlik/guncel olmayan kayit - gercek durum bilinmedigi icin negatif
+      bir deger degil, dogrudan NaN birakilir; 0'a da kirpilmaz, cunku bu da
+      fabrike bir deger olurdu) NaN olur.
+    - is_free_agent_soon: contract_years_remaining <= 0.5 ise True (yarim
+      yildan az kalmis, bonservissiz transfer adayi); contract_years_remaining
+      NaN ise False (bilinmeyen durum "yakinda bedava" olarak ISARETLENMEZ).
     """
     appearances = pd.read_csv(appearances_path)
     players = pd.read_csv(players_path)
@@ -129,11 +139,20 @@ def build_eligible_pool(
     player_meta = players[[
         "player_id", "name", "position", "sub_position",
         "date_of_birth", "country_of_citizenship", "foot",
-    ]]
+    ]].copy()
+    player_meta["contract_expiration_date"] = (
+        players["contract_expiration_date"] if "contract_expiration_date" in players.columns
+        else pd.NaT
+    )
     pool = pool.merge(player_meta, on="player_id", how="left")
     pool = pool.drop(columns=["date"]).reset_index(drop=True)
 
     pool = add_per90(pool)
+
+    pool["contract_expiration_date"] = pd.to_datetime(pool["contract_expiration_date"], errors="coerce")
+    years_remaining = (pool["contract_expiration_date"] - pool["season_end"]).dt.days / 365.25
+    pool["contract_years_remaining"] = years_remaining.where(years_remaining >= 0)
+    pool["is_free_agent_soon"] = (pool["contract_years_remaining"] <= 0.5).fillna(False)
 
     output_file = Path(output_path)
     output_file.parent.mkdir(parents=True, exist_ok=True)

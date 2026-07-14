@@ -42,6 +42,7 @@ def test_value_residuals_v2_sign():
         "minutes": minutes,
         "goals_per90": goals_per90,
         "market_value_in_eur": market_value,
+        "contract_years_remaining": rng.uniform(0, 5, n),
     })
 
     undervalued_idx = 0
@@ -95,6 +96,7 @@ def test_value_residuals_low_signal_flag():
         "minutes": minutes,
         "goals_per90": goals_per90,
         "market_value_in_eur": market_value,
+        "contract_years_remaining": rng.uniform(0, 5, n),
     })
 
     result, _ = scout_tools.value_residuals(df)

@@ -49,9 +49,24 @@ def value_residuals(df: pd.DataFrame, perf_col: str = "goals_per90",
     perf_col secimi: goals_per90 piyasa-referans modeli icin, npxg_per90 (veya
     benzer sansa-gore-duzeltilmis metrikler) asil scouting sinyali icin tercih
     edilir - dusuk R-squared burada zayiflik degil, aranan sinyalin isaretidir.
+
+    contract_years_remaining kovaryati: contract_years_remaining dusukse
+    piyasa degeri performans-disi bir nedenle (yaklasan bonservissiz transfer
+    riski) dusuk olabilir - bu ayrimi yapmadan value_residual'i tek basina
+    "degerinin altinda" diye yorumlamak yanlis olur. contract_years_remaining
+    eksik olan satirlar (build_eligible_pool()'da sozlesme bitis tarihi
+    bilinmeyen/tutarsiz oyuncular) dropna ile regresyondan otomatik dusecek;
+    bu yuzden dusen satir sayisi stdout'a raporlanir.
     """
     required = [perf_col, "date_of_birth", "position", "league", "minutes", value_col]
-    d = df.dropna(subset=required).copy()
+    base_valid_count = len(df.dropna(subset=required))
+
+    required_with_contract = required + ["contract_years_remaining"]
+    d = df.dropna(subset=required_with_contract).copy()
+    dropped_for_contract = base_valid_count - len(d)
+    print(f"value_residuals: contract_years_remaining eksikligi nedeniyle "
+          f"{dropped_for_contract} satir dustu ({base_valid_count} -> {len(d)})")
+
     d = d[(d[value_col] > 0) & (d["minutes"] > 0)]
 
     if "season_end" in d.columns:
@@ -64,7 +79,10 @@ def value_residuals(df: pd.DataFrame, perf_col: str = "goals_per90",
     d["log_minutes"] = np.log(d["minutes"])
 
     dummies = pd.get_dummies(d[["position", "league"]], drop_first=True, dtype=float)
-    X = pd.concat([d[[perf_col, "age", "age_sq", "log_minutes"]], dummies], axis=1)
+    X = pd.concat(
+        [d[[perf_col, "age", "age_sq", "log_minutes", "contract_years_remaining"]], dummies],
+        axis=1,
+    )
     X = sm.add_constant(X)
     y = np.log(d[value_col])
 
