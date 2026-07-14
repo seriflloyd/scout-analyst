@@ -81,76 +81,100 @@ savunma/kaleci - örn. Varane, Mascherano, Bailly) açık-oyun npxG'si sıfıra 
 - bu, önceki karışık hesabın onlara byük ölçüde corner'dan gelen kafa vuruşu
 npxG'si atfettiğini, açık oyunda pratikte hiç şut riski taşımadıklarını doğruluyor.
 
-**Önemli metodolojik not (karşılaştırılabilirliği sınırlayan bir etken):**
-Faz C'de `value_residuals()`'a `contract_years_remaining` zorunlu kovaryat
-olarak eklendi (satırı olmayanlar otomatik düşüyor). Bu 147 oyunculuk La Liga
-setinde sadece 86'sının (`players.csv`'den) sözleşme bitiş tarihi biliniyor -
-61 satır **sırf bu yüzden** düştü. Aşağıdaki `npxg_per90` ve `goals_per90`
-modelleri aynı N=86 üzerinden koşuldu (yani ikisi arasındaki kıyas hâlâ
-elma-elma), ama yukarıdaki eski tablo (N=147, 7 parametre, kontrat kovaryatı
-yok) ile **doğrudan** kıyaslanamaz - N ve parametre sayısındaki fark npxG
-tanımından değil, aradan geçen zamanda eklenen kontrat kovaryatından kaynaklanıyor.
+**Düzeltme notu (2026-07-14):** Bu bölüm ilk yayınlandığında `value_residuals()`'a
+o sırada eklenmiş olan `contract_years_remaining` kovaryatıyla çalıştırılmıştı
+(N=147→86, kontrat verisi bilinmeyenler düşmüştü). Ardından yapılan ayrı bir
+araştırma (`reports/contract_years_remaining_zamanlama_sorunu.md`) bu kovaryatın
+**2015/16 gibi tarihsel veri setleri için kavramsal olarak geçersiz** olduğunu
+kanıtladı: `players.csv` oyuncu başına sezon-indeksli değil TEK/güncel bir
+`contract_expiration_date` tutuyor, bu yüzden 2015/16 season_end'inden çıkarılan
+"kalan süre" değerleri 6.9-14 yıl gibi anlamsız çıkıyordu (gerçek bir sözleşme
+süresi olamayacak kadar büyük). Bu yüzden `value_residuals()` artık
+`contract_years_remaining` sütunu df'te yoksa kovaryatı sessizce atlayıp eski
+7-parametreli modele dönüyor; aşağıdaki sonuçlar bu düzeltilmiş, kontratsız
+haliyle **N=147 üzerinden, ilk rapordaki modelle birebir aynı format ve
+parametre sayısında** yeniden üretildi (bu yüzden `goals_per90` sonuçları,
+npxG değişmediğinden, yukarıdaki ilk tabloyla rakam rakam aynı çıkıyor - bu
+beklenen ve hesaplamanın doğruluğunu teyit eden bir durum).
 
-### Sonuçlar (N=86, 8 parametre - const, perf_col, age, age_sq, log_minutes,
-contract_years_remaining, position_Defender, position_Midfield)
+### Kurulum
+
+`compute_npxg_per90()`'ın varsayılanı, set-parça (corner/frikik/taca) kaynaklı
+possession'lardan gelen sutları artık hariç tutuyor (bkz. `_OPEN_PLAY_SHOT_PATTERNS`
+- 'Regular Play', 'From Counter', 'From Keeper'). 380 maçlık 2015/16 La Liga
+cache'i üzerinde yeniden hesaplandığında bu, 449 oyunculuk "karışık" (tüm
+play_pattern) kümesini 345 oyunculuk açık-oyun-sadece kümesine daraltıyor;
+`data/processed/laliga_1516_npxg_per90.parquet` bu yeni değerlerle güncellendi.
+
+Mevcut StatsBomb↔Transfermarkt eşleşmesi (147 oyuncu, `match_tools.py` isim
+eşleştirmesi - **değiştirilmedi**) yeniden kullanıldı; sadece `npxg`/`npxg_per90`
+sütunları yeni açık-oyun değerleriyle güncellendi. 22 oyuncunun (hepsi
+savunma/kaleci - örn. Varane, Mascherano, Bailly) açık-oyun npxG'si sıfıra düştü
+- bu, önceki karışık hesabın onlara büyük ölçüde corner'dan gelen kafa vuruşu
+npxG'si atfettiğini, açık oyunda pratikte hiç şut riski taşımadıklarını doğruluyor.
+
+### Sonuçlar (N=147, 7 parametre - const, perf_col, age, age_sq, log_minutes,
+position_Defender, position_Midfield - ilk tabloyla birebir aynı format)
 
 | | npxg_per90 (açık-oyun, yeni) | goals_per90 |
 |---|---|---|
-| N | 86 | 86 |
-| Parametre sayısı | 8 | 8 |
-| R-squared | 0.3559 | **0.3709** |
-| Adj. R-squared | 0.2981 | **0.3144** |
-| AIC | 259.44 | **257.42** |
-| BIC | 279.08 | **277.05** |
-| Log-likelihood | -121.72 | **-120.71** |
+| N | 147 | 147 |
+| Parametre sayısı | 7 | 7 |
+| R-squared | **0.2790** | 0.3204 |
+| Adj. R-squared | **0.2481** | 0.2912 |
+| AIC | **435.79** | 427.11 |
+| BIC | **456.72** | 448.04 |
+| Log-likelihood | **-210.89** | -206.55 |
 
-Referans (eski, N=147, 7 parametre, karışık npxG): R²=0.3030/0.3204,
-Adj R²=0.2731/0.2912, AIC=430.82/427.11 (npxg/goals). R² farkı (goals - npxg)
-eskiden ~0.017 idi, yenide (N=86, kontrat kovaryatlı) ~0.015 - fark küçüldü
-ama yön aynı: `goals_per90` bu veri setinde piyasayı hâlâ biraz daha iyi
-açıklıyor. N ve parametre sayısı farklı olduğundan bu daralmanın ne kadarı
-açık-oyun ayrımından, ne kadarı örneklem küçülmesinden geldiği bu kurulumla
-kesin ayrıştırılamıyor - ama yön tersine dönmedi, yani temel sonuç
-(`goals_per90` → piyasa-referans, `npxg_per90` → asıl scouting sinyali) geçerliliğini koruyor.
+Referans (eski, karışık npxG): R²=0.3030, Adj R²=0.2731, AIC=430.82, BIC=451.76,
+LogLik=-208.41.
+
+**R² açık-oyun-sadece npxG'de DÜŞTÜ** (0.3030 → 0.2790, Adj R² 0.2731 → 0.2481) -
+`goals_per90` ile arasındaki fark de BÜYÜDÜ (eskiden ~0.017, şimdi ~0.041 - yön
+aynı ama makas 2.4 kat açıldı). Bu, önceki (yanlış N=86, kontrat kovaryatlı)
+sürümde "fark küçüldü" diye raporlanan sonucun **tersidir** - o sonuç geçersiz
+kontrat kovaryatına dayandığı için yanlıştı; doğru elma-elma (N=147, 7 parametre)
+kıyas bunu düzeltiyor.
 
 ### En Negatif 15 - Değişim
 
-Eski top-15 (karışık npxG, N=147) ile yeni top-15 (açık-oyun npxG, N=86)
-karşılaştırıldığında:
+Eski top-15 (karışık npxG) ile yeni top-15 (açık-oyun npxG) - ikisi de N=147,
+aynı model, tek fark npxG tanımı - karşılaştırıldığında:
 
-- **6 oyuncu her iki listede de var:** Klepper Laveran Lima Ferreira, Álvaro
-  Medrán Just, Abraham González Casanova, Adrián Embarba Blázquez, Gerard
-  Moreno Balaguero, Charles Dias Barbosa de Oliveira.
-- **9 oyuncu eski top-15'ten çıktı** - ama bunların **6'sı sadece kontrat
-  verisi eksikliği yüzünden** yeni N=86 kümesine hiç girmedi (npxG'yle
-  ilgisi yok - Faz C confound'u): Víctor Machón Pérez, Imanol Agirretxe
-  Arruti, Carlos Castro García, Adrián González Morales, Roque Mesa Quevedo,
-  Aythami Artiles Oliva. Geriye kalan **3'ü gerçekten npxG tanım
-  değişikliğinden dolayı** listeden çıktı: Álvaro Vázquez García (npxg_per90
-  0.436→0.185, sıra 25'e düştü), Jonathan Viera Ramos (0.239→0.121, sıra 17),
-  Jefferson Andrés Lerma Solís (0.104→0.029, sıra 16) - açık-oyun npxG'leri
-  ciddi düştüğü için model artık onlardan zaten düşük performans bekliyor,
-  dolayısıyla "beklenenden düşük fiyatlanma" sinyalleri zayıfladı (value_residual
-  daha az negatife kaydı).
-- **9 yeni oyuncu listeye girdi:** Iago Aspas Juncal, Pablo Fornals Malla,
-  Rubén Castro Martín, José Luis Morales Nogales, Damián Nicolás Suárez
-  Suárez, Luis Hernández Rodríguez, Diego Javier Llorente Ríos, Celso Borges
-  Mora, Cristiano Biraghi - açık-oyun ayrımı bu oyuncuların gerçek açık-oyun
-  bitiricilik profilini karışık hesaba göre daha net (ve bazılarında daha
-  düşük) yakaladığı için modelin beklentisiyle piyasa fiyatı arasındaki fark
-  büyüdü.
+- **13 oyuncu her iki listede de var** (değişmedi): Kléper Laveran Lima
+  Ferreira, Álvaro Medrán Just, Víctor Machín Pérez, Adrián Embarba Blázquez,
+  Abraham González Casanova, Álvaro Vázquez García (eski çevirisiyle),
+  Adrián González Morales, Roque Mesa Quevedo, Jonathan Viera Ramos, Aythami
+  Artiles Oliva, Carlos Castro García, Gerard Moreno Balaguero, Jefferson
+  Andrés Lerma Solís.
+- **Sadece 2 oyuncu çıktı:** Charles Días Barbosa de Oliveira, Imanol
+  Agirretxe Arruti.
+- **Sadece 2 yeni oyuncu girdi:** Hernán Arsenio Pérez González, Simão Mate.
+
+Yani gerçekte (kontrat confound'u temizlenince) liste **çok stabil** - 15
+isimden 13'ü aynı kaldı. Önceki (hatalı) N=86 kıyasında "9/15 değişti"
+raporlanmıştı; bunun büyük kısmı npxG'den değil, geçersiz kontrat kovaryatının
+rastgele 61 oyuncuyu örneklem dışına atmasından kaynaklanıyordu.
 
 ### Yorum
 
-Açık-oyun ayrımı sinyali **ne kesin güçlendirdi ne zayıflattı** - yön aynı
-kaldı (goals piyasayı biraz daha iyi açıklıyor, npxg'nin düşük R²'si hâlâ
-"piyasanın gözden kaçırdığı sinyal" olarak yorumlanabilir) ama listenin
-içeriği belirgin şekilde değişti: 380 maçlık gerçek veride 9/15 isim döndü,
-bunun 6'sı salt kontrat-verisi confound'undan, 3'ü gerçek npxG yeniden
-tanımından kaynaklanıyor. Pratik sonuç: set-parça sutlarını dışlamak,
-kafa-vuruşu/duran-top uzmanı olmayan ama yüksek "mixed" npxG'ye sahip görünen
-oyuncuları (örn. Vázquez, Viera, Lerma) listeden çıkarıp, gerçek açık-oyun
-bitiricilik profiline sahip oyuncuları (Aspas, Fornals, Rubén Castro, Morales
-gibi) öne çıkarıyor - bu, `compute_set_piece_npxg_per90()`'ın ayrı raporlanma
-amacına tam uyuyor: set-parçaya bağımlı bir profili "açık oyunda değerinin
-altında" diye yanlış etiketlemeyi önlüyor.
+Doğru (N=147, 7 parametre, kontratsız) kıyas gösteriyor ki set-parça sutlarını
+hariç tutmak `npxg_per90`'ın piyasa değerini açıklama gücünü **zayıflatıyor**
+(R² 0.303→0.279), `goals_per90` ile arasındaki fark büyüyor. Bunun olası
+nedeni: elit/yüksek piyasa değerli oyuncular genelde takımın hem penaltı hem
+serbest vuruş/korner uzmanlarıdır (örn. Messi, Ronaldo doğrudan frikik atar);
+"mixed" npxG bu oyuncuların gerçek piyasa fiyatlamasıyla örtüşen bir sinyali
+(duran topta da güvenilen oyuncu olmak) taşıyordu - açık-oyun-sadece tanım bu
+bilgiyi kasıtlı olarak çıkarıyor, dolayısıyla R² düşüyor. Bu, npxg_per90'ın
+zayıfladığı anlamına gelmiyor - tam tersine, `goals_per90` ile aradaki farkın
+büyümesi, açık-oyun npxG'nin piyasanın FARKINDA OLMADIĞI sinyali daha da
+saflaştırdığını gösterir (dead-ball itibarından arındırılmış, salt oyun-içi
+bitiricilik). En-negatif-15 listesinin neredeyse hiç değişmemesi (13/15 aynı)
+de bunu destekler: bu oyuncular zaten set-parçaya bağımlı olmadıkları için
+tanım değişikliğinden etkilenmediler - onlar gerçekten "açık oyunda değerinin
+altında" adaylar.
+
+Pratik sonuç: `compute_set_piece_npxg_per90()`'ın ayrı raporlanması hâlâ
+değerlidir (set-parçaya bağımlı bir profili yanlış etiketlemeyi önler), ama bu
+veri setinde en-negatif-15 sıralamasını büyük ölçüde DEĞİŞTİRMEDİ - asıl etkisi
+model R²'sinde (npxG'nin piyasa-açıklama gücü azaldı) görüldü.

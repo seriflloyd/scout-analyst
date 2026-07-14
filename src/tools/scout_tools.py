@@ -50,22 +50,32 @@ def value_residuals(df: pd.DataFrame, perf_col: str = "goals_per90",
     benzer sansa-gore-duzeltilmis metrikler) asil scouting sinyali icin tercih
     edilir - dusuk R-squared burada zayiflik degil, aranan sinyalin isaretidir.
 
-    contract_years_remaining kovaryati: contract_years_remaining dusukse
-    piyasa degeri performans-disi bir nedenle (yaklasan bonservissiz transfer
-    riski) dusuk olabilir - bu ayrimi yapmadan value_residual'i tek basina
-    "degerinin altinda" diye yorumlamak yanlis olur. contract_years_remaining
+    contract_years_remaining kovaryati (df'te sutun VARSA): contract_years_remaining
+    dusukse piyasa degeri performans-disi bir nedenle (yaklasan bonservissiz
+    transfer riski) dusuk olabilir - bu ayrimi yapmadan value_residual'i tek
+    basina "degerinin altinda" diye yorumlamak yanlis olur. contract_years_remaining
     eksik olan satirlar (build_eligible_pool()'da sozlesme bitis tarihi
     bilinmeyen/tutarsiz oyuncular) dropna ile regresyondan otomatik dusecek;
     bu yuzden dusen satir sayisi stdout'a raporlanir.
+
+    contract_years_remaining df'te sutun olarak HIC yoksa (orn. build_eligible_pool()
+    disinda, match_tools.py fuzzy-match ciktisi gibi tarihsel/sezon-indeksli
+    olmayan veri kaynaklarinda - bkz. reports/contract_years_remaining_zamanlama_sorunu.md)
+    kovaryat sessizce ATLANIR, model eski (contract'siz) 7-parametreli haline
+    doner - cunku bu durumda contract_years_remaining kavramsal olarak
+    hesaplanamaz (players.csv sezona degil oyuncuya tek bir guncel sozlesme
+    tarihi bagliyor), zorla eklemek look-ahead bias yaratir.
     """
     required = [perf_col, "date_of_birth", "position", "league", "minutes", value_col]
+    has_contract = "contract_years_remaining" in df.columns
     base_valid_count = len(df.dropna(subset=required))
 
-    required_with_contract = required + ["contract_years_remaining"]
-    d = df.dropna(subset=required_with_contract).copy()
-    dropped_for_contract = base_valid_count - len(d)
-    print(f"value_residuals: contract_years_remaining eksikligi nedeniyle "
-          f"{dropped_for_contract} satir dustu ({base_valid_count} -> {len(d)})")
+    required_full = required + ["contract_years_remaining"] if has_contract else required
+    d = df.dropna(subset=required_full).copy()
+    if has_contract:
+        dropped_for_contract = base_valid_count - len(d)
+        print(f"value_residuals: contract_years_remaining eksikligi nedeniyle "
+              f"{dropped_for_contract} satir dustu ({base_valid_count} -> {len(d)})")
 
     d = d[(d[value_col] > 0) & (d["minutes"] > 0)]
 
@@ -78,11 +88,12 @@ def value_residuals(df: pd.DataFrame, perf_col: str = "goals_per90",
     d["age_sq"] = d["age"] ** 2
     d["log_minutes"] = np.log(d["minutes"])
 
+    perf_cols = [perf_col, "age", "age_sq", "log_minutes"]
+    if has_contract:
+        perf_cols.append("contract_years_remaining")
+
     dummies = pd.get_dummies(d[["position", "league"]], drop_first=True, dtype=float)
-    X = pd.concat(
-        [d[[perf_col, "age", "age_sq", "log_minutes", "contract_years_remaining"]], dummies],
-        axis=1,
-    )
+    X = pd.concat([d[perf_cols], dummies], axis=1)
     X = sm.add_constant(X)
     y = np.log(d[value_col])
 
