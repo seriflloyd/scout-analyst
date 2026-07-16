@@ -120,6 +120,35 @@ def _add_segment_minutes(lineups_df: pd.DataFrame, events_df: pd.DataFrame) -> p
     return d
 
 
+def load_multi_league_events(competitions: list, events_cache_dir: str = "data/raw/statsbomb/events",
+                             lineups_cache_dir: str = "data/raw/statsbomb/lineups") -> tuple:
+    """Birden fazla lig/sezonun event+lineup verisini tek bir DataFrame ciftinde
+    birlestirir - get_events_cached/get_lineups_cached'i (mevcut cache/retry
+    davranisiyla, degistirilmeden) her mac icin cagiran ust-duzey bir birlestirici.
+
+    competitions: [(competition_id, season_id), ...] cifti listesi (orn.
+    [(2, 27), (12, 27)] -> Premier League 2015/16 + Serie A 2015/16). Her cift
+    icin sb.matches() ile mac listesi cekilir; StatsBomb match_id'leri tum
+    liglerde global olarak benzersiz oldugundan cakisma/tekrar riski yoktur.
+
+    Donus: (events_df, lineups_df) - verilen tum lig/sezonlarin mac event ve
+    lineup satirlarinin concat edilmis hali. compute_player_minutes,
+    compute_npxg_per90, compute_goals_per90 gibi asagi-akis fonksiyonlari
+    tek-lig cagrisindaki gibi degismeden calisir (bu fonksiyonlar zaten
+    events_df/lineups_df'in hangi ligden geldigine bakmaz)."""
+    all_events = []
+    all_lineups = []
+    for competition_id, season_id in competitions:
+        matches = sb.matches(competition_id=competition_id, season_id=season_id)
+        for match_id in matches["match_id"]:
+            all_events.append(get_events_cached(match_id, cache_dir=events_cache_dir))
+            all_lineups.append(get_lineups_cached(match_id, cache_dir=lineups_cache_dir))
+
+    events_df = pd.concat(all_events, ignore_index=True)
+    lineups_df = pd.concat(all_lineups, ignore_index=True)
+    return events_df, lineups_df
+
+
 def compute_player_minutes(lineups_df: pd.DataFrame, events_df: pd.DataFrame) -> pd.DataFrame:
     """Birden fazla macin lineup pozisyon segmentlerinden (get_lineups_cached
     cikisi, 'match_id' sutunuyla concat edilmis) oyuncu basina toplam oynanan

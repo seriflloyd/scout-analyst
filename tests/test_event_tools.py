@@ -93,6 +93,43 @@ def test_compute_npxg_per90_separates_open_play_from_set_piece():
     assert set_piece.loc[set_piece["player_id"] == 1, "npxg"].iloc[0] == 0.2
 
 
+def test_load_multi_league_events_combines_multiple_competitions(monkeypatch):
+    """Iki sahte 'lig' (competition_id, season_id cifti) icin sb.matches() ve
+    get_events_cached/get_lineups_cached sahtelenir; load_multi_league_events()
+    her ikisinin mac verisini tek bir events_df/lineups_df'te dogru birlestirmeli
+    (hicbir mac kaybolmamali, hicbir mac tekrarlanmamali)."""
+    fake_matches = {
+        (1, 100): pd.DataFrame({"match_id": [11, 12]}),
+        (2, 200): pd.DataFrame({"match_id": [21]}),
+    }
+    fake_events = {
+        11: pd.DataFrame({"match_id": [11], "type": ["Shot"]}),
+        12: pd.DataFrame({"match_id": [12], "type": ["Pass"]}),
+        21: pd.DataFrame({"match_id": [21], "type": ["Shot"]}),
+    }
+    fake_lineups = {
+        11: pd.DataFrame({"match_id": [11], "player_id": [1]}),
+        12: pd.DataFrame({"match_id": [12], "player_id": [2]}),
+        21: pd.DataFrame({"match_id": [21], "player_id": [3]}),
+    }
+
+    class FakeSb:
+        @staticmethod
+        def matches(competition_id, season_id):
+            return fake_matches[(competition_id, season_id)]
+
+    monkeypatch.setattr(event_tools, "sb", FakeSb)
+    monkeypatch.setattr(event_tools, "get_events_cached", lambda match_id, cache_dir=None: fake_events[match_id])
+    monkeypatch.setattr(event_tools, "get_lineups_cached", lambda match_id, cache_dir=None: fake_lineups[match_id])
+
+    events_df, lineups_df = event_tools.load_multi_league_events([(1, 100), (2, 200)])
+
+    assert sorted(events_df["match_id"].tolist()) == [11, 12, 21]
+    assert sorted(lineups_df["match_id"].tolist()) == [11, 12, 21]
+    assert len(events_df) == 3
+    assert len(lineups_df) == 3
+
+
 def test_get_primary_position_group_uses_minutes_weighted_majority():
     """Bir oyuncu mac icinde kisa sureli 'Left Wing' (Attack) sonra uzun
     sureli 'Right Back' (Defender) oynamissa, dakika agirlikli birincil
