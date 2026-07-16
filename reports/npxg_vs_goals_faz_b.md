@@ -178,3 +178,109 @@ Pratik sonuç: `compute_set_piece_npxg_per90()`'ın ayrı raporlanması hâlâ
 değerlidir (set-parçaya bağımlı bir profili yanlış etiketlemeyi önler), ama bu
 veri setinde en-negatif-15 sıralamasını büyük ölçüde DEĞİŞTİRMEDİ - asıl etkisi
 model R²'sinde (npxG'nin piyasa-açıklama gücü azaldı) görüldü.
+
+## Güncelleme 2: Genişletilmiş Eşleşme (N=245) ile Yeniden Çalıştırma
+
+**Tarih:** 2026-07-14
+
+### Kurulum
+
+`match_tools.py`'ye eklenen nickname+country blocking düzeltmesi (bkz. ilgili
+commit) StatsBomb↔Transfermarkt eşleşme oranını aynı 345 açık-oyun-npxG
+havuzunda %55.1'den (190/345) **%71.0'e** (245/345) çıkardı - sıfır dış
+bağımlılıkla. Bu bölüm, yukarıdaki (N=147, kontratsız, 7 parametre) modeli
+şimdi bu **245 kişilik güncel havuzla** yeniden çalıştırıyor.
+
+**Düzeltme notu (2026-07-16):** Bu bölüm ilk yayınlandığında
+`build_statsbomb_value_pool()` **dakika eşiği uygulamıyordu**
+(`build_eligible_pool()`'daki `apply_minutes_threshold()` muadili yoktu) - bu
+yüzden 245 kişilik havuzda 320-835 dakikalık (bazıları yarım sezonun bile
+altında oynamış) oyuncular da modele giriyor, küçük-örneklem gürültüsüyle
+"en değerinin altında" listesine sızıyordu (örn. Mamadou Sylla Diallo 376 dk,
+Josep Señé Escudero 367 dk, Juan Muñoz Muñoz 320 dk - eski, hatalı tablo
+aşağıda kaldırılıp değiştirildi). Bu **düzeltildi**: `build_statsbomb_value_pool()`'a
+artık `min_minutes` parametresi (varsayılan `config.MIN_MINUTES=900`) eklendi
+ve eşleşen sonuca `apply_minutes_threshold()` uygulanıyor (bkz. `match_tools.py`
+commit'i). 245 kişilik eşleşen havuzdan **72 oyuncu bu eşiğin altında kaldığı
+için elendi**; aşağıdaki tüm sonuçlar düzeltilmiş **N=173** havuzu üzerinden
+yeniden üretildi.
+
+### Sonuçlar
+
+| | npxg_per90 (açık-oyun) N=147 | npxg_per90 N=173 (eşiklenmiş) | goals_per90 N=147 | goals_per90 N=173 (eşiklenmiş) |
+|---|---|---|---|---|
+| N | 147 | **173** | 147 | **173** |
+| Parametre sayısı | 7 | **9** | 7 | **9** |
+| R-squared | 0.2790 | **0.2790** | 0.3204 | **0.3564** |
+| Adj. R-squared | 0.2481 | **0.2438** | 0.2912 | **0.3250** |
+| AIC | 435.79 | **510.14** | 427.11 | **490.49** |
+| BIC | 456.72 | **538.51** | 448.04 | **518.87** |
+| Log-likelihood | -210.89 | **-246.07** | -206.55 | **-236.24** |
+
+**Parametre sayısı 7→9 oldu** - bu bir model değişikliği değil, N artışının
+doğal sonucu: 173 kişilik genişletilmiş (ve eşiklenmiş) havuzda artık
+`position` sütununda `Goalkeeper` ve (players.csv'nin kendi veri kalitesi
+kusuru olan) literal `"Missing"` kategorileri de görülüyor (147'lik eski
+havuzda hiç yoktu), `pd.get_dummies` bunlari 2 ekstra kukla degisken olarak
+ekliyor. AIC/BIC N ile birlikte büyüdüğünden (log-likelihood daha fazla
+gözlemle daha negatif olur), bunları N=147 sonuçlarıyla ham değer olarak
+kıyaslamak yanıltıcı olur - asıl anlamlı kıyas **R²/Adj. R²** ve **goals vs
+npxg farkı**dır.
+
+**npxg_per90 R²'si N=147→173'te neredeyse sabit kaldı** (0.2790→0.2790,
+Adj R² hafif düştü: 0.2481→0.2438), ama **goals_per90 R²'si belirgin arttı**
+(0.3204→0.3564). `goals_per90` ile `npxg_per90` arasındaki fark bu yüzden
+büyüdü (R² farkı N=147'de ~0.041, N=173'te ~0.077) - yön (goals piyasayı daha
+iyi açıklıyor) aynı kaldı ve daha da belirginleşti.
+
+### En Negatif 15 - Değişim (N=147 → N=173, eşiklenmiş)
+
+| player_name | minutes | npxg_per90 | value_residual |
+|---|---|---|---|
+| Marcelo Vieira da Silva Júnior | 1367 | 0.017 | -2.232 |
+| Víctor Machín Pérez | 1736 | 0.090 | -2.220 |
+| Álvaro Medrán Just | 1152 | 0.027 | -2.174 |
+| Abraham González Casanova | 1054 | 0.162 | -1.633 |
+| Ismael López Blanco | 1493 | 0.060 | -1.631 |
+| Carlos Castro García | 930 | 0.408 | -1.612 |
+| Adrián Embarba Blázquez | 1611 | 0.097 | -1.561 |
+| Jorge Franco Alviz | 1042 | 0.149 | -1.540 |
+| Adrián González Morales | 1957 | 0.140 | -1.458 |
+| David Simón Rodríguez Santana | 1347 | 0.028 | -1.346 |
+| Roque Mesa Quevedo | 2232 | 0.030 | -1.323 |
+| Sergio Ezequiel Araújo | 1370 | 0.218 | -1.307 |
+| Jefferson Andrés Lerma Solís | 1871 | 0.029 | -1.261 |
+| Jerónimo Figueroa Cabrera | 1330 | 0.044 | -1.238 |
+| Jonathan Viera Ramos | 2256 | 0.121 | -1.222 |
+
+Tüm satırlar artık **≥900 dakika** (en düşük: Carlos Castro García, 930 dk) -
+küçük-örneklem gürültüsü riski taşıyan hiçbir isim listede yok.
+
+- **7 oyuncu, eşik uygulanmadan önceki (hatalı) N=245 top-15'iyle ortak:**
+  Álvaro Medrán Just, Víctor Machín Pérez, Marcelo Vieira da Silva Júnior,
+  Abraham González Casanova, Adrián Embarba Blázquez, Jorge Franco Alviz,
+  Ismael López Blanco - hepsi zaten ≥900 dakikaydı, eşikten etkilenmediler.
+- **8 oyuncu eşikle listeden düştü** (hepsi <900 dk, düzeltme öncesi hatalı
+  listedeydi): Mamadou Sylla Diallo (376 dk), Josep Señé Escudero (367 dk),
+  Juan Muñoz Muñoz (320 dk), Wanderson Maciel Sousa Campos (819 dk), Carlos
+  Martín Vigaray (835 dk), Daniel Arnaud N'Di (768 dk), Antonio Manuel Luna
+  Rodríguez (747 dk), José María Martín-Bejarano Serrano (770 dk).
+- **8 oyuncu yeni listeye girdi** (hepsi ≥900 dk; eşik uygulanmadan önce
+  top-15 dışında kalmışlardı çünkü düşük-dakikalı gürültülü artıklar onları
+  sıralamada aşağı itiyordu): Carlos Castro García, Adrián González Morales,
+  David Simón Rodríguez Santana, Roque Mesa Quevedo, Sergio Ezequiel Araújo,
+  Jefferson Andrés Lerma Solís, Jerónimo Figueroa Cabrera, Jonathan Viera
+  Ramos.
+
+### Yorum
+
+Dakika eşiği düzeltmesi listeyi önemli ölçüde temizledi: düzeltme öncesi
+top-15'in 3'ü (Sylla Diallo 376dk, Señé Escudero 367dk, Muñoz Muñoz 320dk)
+yarım sezonun altında oynamış oyunculardı - bunların büyük negatif artıkları
+gerçek bir "değerinin altında" sinyalinden çok küçük-örneklem varyansından
+kaynaklanıyor olabilirdi. Eşik sonrası listeye giren isimlerden Roque Mesa
+Quevedo (2232 dk) ve Jonathan Viera Ramos (2256 dk) gibileri tam sezon
+oynamış, önceki (N=147) analizde de zaten en-negatif-15'te yer almış tanıdık
+isimler - bu, düzeltmenin listeyi rastgele değiştirmediğini, tam tersine
+gürültülü düşük-örneklem sinyalini gerçek/istikrarlı sinyalle değiştirdiğini
+gösterir.

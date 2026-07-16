@@ -4,6 +4,9 @@ import unicodedata
 import pandas as pd
 from rapidfuzz import fuzz, process
 
+from src import config
+from src.tools.data_tools import apply_minutes_threshold
+
 
 def normalize_name(name: str) -> str:
     """Aksanlari kaldirir, kucuk harfe cevirir, fazla bosluklari temizler."""
@@ -146,7 +149,7 @@ def demote_ambiguous_matches(match_result: pd.DataFrame) -> pd.DataFrame:
 def build_statsbomb_value_pool(npxg_df: pd.DataFrame, players: pd.DataFrame, valuations: pd.DataFrame,
                                competition_code: str, season_start: str, season_end: str,
                                min_market_value: float, score_threshold: float = 90.0,
-                               nicknames: dict = None):
+                               nicknames: dict = None, min_minutes: int = config.MIN_MINUTES):
     """StatsBomb npxG/90 sonuclarini (npxg_df: player_name, npxg, minutes, npxg_per90)
     Transfermarkt oyuncu + piyasa degeri verisiyle isim tabanli fuzzy match ile
     birlestirir.
@@ -155,6 +158,13 @@ def build_statsbomb_value_pool(npxg_df: pd.DataFrame, players: pd.DataFrame, val
     get_player_nicknames()) - verilirse fuzzy_match_players'a alt isim olarak
     aktarilir, ortak soyisim catismalarini azaltir (bkz. fuzzy_match_players
     docstring'i).
+
+    min_minutes: eslesen sonuca build_eligible_pool() ile ayni kucuk-orneklem
+    esigi (apply_minutes_threshold(), varsayilan config.MIN_MINUTES) uygulanir -
+    bu olmadan dusuk dakikali (orn. 300-400 dk) oyuncular value_residuals()'a
+    girip gurultulu, guvenilmez artiklarla "en degerinin altinda" listesine
+    sizabiliyordu (ampirik olarak dogrulandi: N=245 La Liga 2015/16 calismasinda
+    bkz. reports/npxg_vs_goals_faz_b.md).
 
     Donus: (matched_df, unmatched_df).
     matched_df: value_residuals() icin gerekli sutunlari icerir (npxg_per90,
@@ -198,5 +208,10 @@ def build_statsbomb_value_pool(npxg_df: pd.DataFrame, players: pd.DataFrame, val
     matched["league"] = competition_code
     matched["season_end"] = pd.Timestamp(season_end)
     matched = matched.reset_index(drop=True)
+
+    below_threshold = int((matched["minutes"] < min_minutes).sum())
+    print(f"build_statsbomb_value_pool: dakika esigi (>={min_minutes}) {below_threshold} satiri eleyecek "
+          f"({len(matched)} -> {len(matched) - below_threshold})")
+    matched = apply_minutes_threshold(matched, min_minutes)
 
     return matched, unmatched

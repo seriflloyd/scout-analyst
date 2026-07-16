@@ -161,3 +161,38 @@ def test_build_statsbomb_value_pool_end_to_end():
     assert matched.iloc[0]["market_value_in_eur"] == 80_000_000
     assert len(unmatched) == 1
     assert unmatched.iloc[0]["player_name"] == "Isimsiz Bilinmeyen Oyuncu"
+
+
+def test_build_statsbomb_value_pool_applies_minutes_threshold():
+    """Kucuk-orneklem gurultusunu elemek icin, eslesmis olsa bile min_minutes
+    altinda kalan oyuncular sonuc havuzundan dusmeli (build_eligible_pool()'daki
+    apply_minutes_threshold() ile ayni davranis)."""
+    npxg_df = pd.DataFrame({
+        "player_name": ["Luis Alberto Suárez Díaz", "Karim Benzema"],
+        "npxg": [20.0, 1.0],
+        "minutes": [1800.0, 320.0],
+        "npxg_per90": [1.0, 0.28],
+    })
+    players = pd.DataFrame({
+        "player_id": [1, 2],
+        "name": ["Luis Suárez", "Karim Benzema"],
+        "date_of_birth": ["1987-01-24", "1987-12-19"],
+        "position": ["Attack", "Attack"],
+        "sub_position": ["Centre-Forward", "Centre-Forward"],
+    })
+    valuations = pd.DataFrame({
+        "player_id": [1, 2],
+        "date": ["2016-01-01", "2016-01-01"],
+        "market_value_in_eur": [80_000_000, 40_000_000],
+        "player_club_domestic_competition_id": ["ES1", "ES1"],
+    })
+
+    matched, unmatched = match_tools.build_statsbomb_value_pool(
+        npxg_df, players, valuations,
+        competition_code="ES1", season_start="2015-07-01", season_end="2016-06-30",
+        min_market_value=100_000, min_minutes=900,
+    )
+
+    assert len(matched) == 1
+    assert matched.iloc[0]["player_name"] == "Luis Alberto Suárez Díaz"
+    assert "Karim Benzema" not in matched["player_name"].values
