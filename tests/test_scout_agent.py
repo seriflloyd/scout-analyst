@@ -111,3 +111,92 @@ def test_parse_candidates_json_extracts_list_from_surrounding_text():
 def test_parse_candidates_json_returns_empty_list_on_malformed_input():
     assert scout._parse_candidates_json("bu bir liste degil") == []
     assert scout._parse_candidates_json("[{malformed json") == []
+
+
+def test_run_tool_run_value_residuals_stores_backfill_source():
+    """_backfill_from_value_residuals()'un okuyacagi state anahtarlari
+    (value_residuals_df, value_residuals_perf_col) run_value_residuals
+    calistiginda dogru sekilde set edilmeli."""
+    state = {"df": _synthetic_pool(n=30)}
+
+    scout._run_tool("run_value_residuals", {}, state)
+
+    assert "value_residuals_df" in state
+    assert "value_residual" in state["value_residuals_df"].columns
+    assert state["value_residuals_perf_col"] == "npxg_per90"
+
+
+def test_backfill_overrides_wrong_llm_number_with_real_tool_output():
+    """Kritik senaryo: LLM'in JSON'unda dogru isimle birlikte YANLIS bir sayi
+    (orn. percentile'i ham deger sanip yazmasi) gelirse, geri-doldurma bu
+    sayiyi YOK SAYMALI ve gercek DataFrame'deki dogru degeri kullanmalidir -
+    LLM'in yazdigi hatali sayi sonuca asla sizmamali."""
+    df = _synthetic_pool(n=15)
+    vr_df, _ = scout.scout_tools.value_residuals(df, perf_col="npxg_per90", value_col="market_value_in_eur")
+
+    target = vr_df.iloc[0]
+    real_npxg = float(target["npxg_per90"])
+    real_residual = float(target["value_residual"])
+    real_value = float(target["market_value_in_eur"])
+
+    # LLM'in (yanlis) JSON'u: dogru isim, ama uydurma/yanlis sayilar (orn.
+    # bir onceki gercek calistirmada gozlemlenen percentile-karistirma hatasi)
+    llm_candidates = [{
+        "player_name": target["player_name"],
+        "position": target["position"],
+        "gerekce": "iyi performans, dusuk deger",
+        "npxg_per90": 0.31,               # YANLIS - gercek degerle eslesmiyor
+        "value_residual": -999.0,          # YANLIS
+        "market_value_in_eur": 1,          # YANLIS
+    }]
+
+    result = scout._backfill_from_value_residuals(llm_candidates, vr_df, "npxg_per90")
+
+    assert len(result) == 1
+    entry = result[0]
+    assert entry["npxg_per90"] == real_npxg
+    assert entry["value_residual"] == real_residual
+    assert entry["market_value_in_eur"] == real_value
+    # LLM'in yazdigi hatali sayilar sonuca hic yansimamali
+    assert entry["npxg_per90"] != 0.31
+    assert entry["value_residual"] != -999.0
+
+
+def test_backfill_drops_candidate_with_no_reliable_name_match():
+    """LLM'in yazdigi isim, arac ciktisindaki HICBIR oyuncuya
+    NAME_MATCH_SCORE_THRESHOLD uzerinde eslesmezse, o aday (sessizce degil)
+    dusurulmelidir - dogrulanamayan bir aday sonuca sizmamali."""
+    df = _synthetic_pool(n=10)
+    vr_df, _ = scout.scout_tools.value_residuals(df, perf_col="npxg_per90", value_col="market_value_in_eur")
+
+    llm_candidates = [{"player_name": "Tamamen Alakasiz Bir Isim Zzzqx", "position": "Attack", "gerekce": "?"}]
+
+    result = scout._backfill_from_value_residuals(llm_candidates, vr_df, "npxg_per90")
+
+    assert result == []
+
+
+def test_backfill_returns_empty_when_value_residuals_never_ran():
+    """run_value_residuals hic cagrilmadiysa (value_residuals_df=None), hicbir
+    adayin sayisal alani dogrulanamaz - tum adaylar dusurulmeli."""
+    llm_candidates = [{"player_name": "Herhangi Biri", "position": "Attack", "gerekce": "?"}]
+
+    result = scout._backfill_from_value_residuals(llm_candidates, None, "npxg_per90")
+
+    assert result == []
+
+
+def test_backfill_tolerates_slightly_misspelled_names():
+    """LLM ismi hafifce yanlis/eksik yazmis olsa bile (orn. aksan/bosluk farki),
+    rapidfuzz toleransli eslestirme dogru oyuncuyu bulmali."""
+    df = _synthetic_pool(n=10)
+    vr_df, _ = scout.scout_tools.value_residuals(df, perf_col="npxg_per90", value_col="market_value_in_eur")
+    target = vr_df.iloc[0]
+
+    misspelled = target["player_name"].replace("Oyuncu", "oyuncu ")  # kucuk harf + fazla bosluk
+    llm_candidates = [{"player_name": misspelled, "position": target["position"], "gerekce": "?"}]
+
+    result = scout._backfill_from_value_residuals(llm_candidates, vr_df, "npxg_per90")
+
+    assert len(result) == 1
+    assert result[0]["player_name"] == target["player_name"]

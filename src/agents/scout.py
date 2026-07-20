@@ -5,11 +5,24 @@ import re
 
 import anthropic
 import pandas as pd
+from rapidfuzz import fuzz, process
 
 from src import config
 from src.tools import scout_tools
 
 DEFAULT_POOL_PATH = "data/processed/multi_league_1516_matched.parquet"
+
+# Backfill sirasinda LLM'in yazdigi isimle arac ciktisindaki isim arasinda
+# kabul edilecek en dusuk rapidfuzz skoru (asagida NAME_MATCH_SCORE_THRESHOLD
+# olarak kullanilir).
+NAME_MATCH_SCORE_THRESHOLD = 85.0
+
+# _backfill_from_value_residuals()'da LLM'in JSON'undan degil, run_value_residuals
+# aracinin son DataFrame'inden geri doldurulan sutunlar - bkz. run_scout docstring'i.
+# 'npxg_per90' HER ZAMAN geri doldurulur (LLM run_value_residuals'i farkli bir
+# perf_col ile - orn. 'npxg_per90_pct' - calistirmis olsa bile referans ham
+# performans degeri kaybolmasin diye); perf_col ayrica (kendi adiyla) eklenir.
+_BACKFILL_COLUMNS = ["npxg_per90", "value_residual", "market_value_in_eur", "league", "dusuk_sinyal_guvenilirligi"]
 
 SYSTEM = (
     "Sen bir futbol scoutusun. Elindeki araclarla data/processed/"
@@ -18,7 +31,14 @@ SYSTEM = (
     "sirasi: once percentile_by_group ile performansi bagla, sonra "
     "value_residuals ile deger artigini hesapla, en negatif 5-10 adayi sec, "
     "ilgi cekici olanlar icin similar_players ile benzer oyuncu bul. Turkce, "
-    "kisa ve net yaz."
+    "kisa ve net yaz.\n\n"
+    "ONEMLI: Nihai JSON yanitinda HICBIR sayisal deger (npxg_per90, "
+    "value_residual, market_value_in_eur, percentile vb.) YAZMA - bu degerleri "
+    "hafizandan/gorduklerinden aktarirsan yanlis hatirlayabilirsin (orn. "
+    "percentile'i ham degerle karistirmak gibi). Sayisal alanlar sistem "
+    "tarafindan arac ciktisindan otomatik geri doldurulacak; senin gorevin "
+    "sadece HANGI oyuncularin secildigini (isim+pozisyon+kisa gerekce) net "
+    "sekilde belirtmek."
 )
 
 TOOLS = [
@@ -108,6 +128,11 @@ def _run_tool(name: str, args: dict, state: dict) -> dict:
         except Exception as e:
             return {"hata": str(e)}
         state["df"] = df
+        # LLM'in JSON'una GUVENILMEYECEK sayisal alanlarin geri-doldurulacagi
+        # kaynak - run_scout()'un _backfill_from_value_residuals() adimi bunu
+        # kullanir (bkz. dosya basindaki not).
+        state["value_residuals_df"] = df
+        state["value_residuals_perf_col"] = perf_col
         cols = [c for c in ["player_name", "position", "league", "value_residual", perf_col,
                              "market_value_in_eur", "player_id"] if c in df.columns]
         return {
@@ -150,6 +175,70 @@ def _parse_candidates_json(text: str) -> list:
         return []
 
 
+def _backfill_from_value_residuals(candidates: list, value_residuals_df, perf_col: str) -> list:
+    """LLM'in JSON'undaki player_name/position/gerekce dismindaki HICBIR
+    sayisal/kategorik alana GUVENILMEZ - bir onceki calistirmada LLM'in
+    percentile'i ham deger sanip yazdigi gozlemlendi (bkz. Faz D duzeltme
+    commit'i). Bunun yerine her adayin _BACKFILL_COLUMNS + perf_col
+    degerleri, run_value_residuals aracinin EN SON DONDURDUGU DataFrame'den
+    (value_residuals_df) player_name uzerinden rapidfuzz ile (LLM ismi hafif
+    yanlis/eksik yazmis olabilir - orn. aksan/soyisim kisaltmasi) toleransli
+    eslestirilerek GERI DOLDURULUR.
+
+    value_residuals_df hic yoksa (run_value_residuals hic cagrilmadiysa) VEYA
+    bir aday NAME_MATCH_SCORE_THRESHOLD uzerinde guvenilir bir isme
+    eslesmezse, o aday SESSIZCE degil LOGLANARAK dusurulur - boylece
+    dogrulanamayan bir sayi asla LLM'in yazdigi haliyle sizmaz.
+
+    Donus: her biri player_name (arac ciktisindaki DOGRU/TAM isim), position,
+    gerekce ve _BACKFILL_COLUMNS + perf_col alanlarini iceren aday listesi."""
+    if value_residuals_df is None or value_residuals_df.empty:
+        print(f"run_scout: value_residuals_df yok - {len(candidates)} aday sayisal dogrulama "
+              f"olmadan kabul edilemez, tumu dusuruldu")
+        return []
+
+    names = value_residuals_df["player_name"].tolist()
+    backfilled = []
+    for c in candidates:
+        query = (c or {}).get("player_name")
+        if not query:
+            print(f"run_scout: aday player_name icermiyor, dusuruldu: {c}")
+            continue
+
+        match = process.extractOne(query, names, scorer=fuzz.token_set_ratio)
+        if match is None or match[1] < NAME_MATCH_SCORE_THRESHOLD:
+            best = f"'{match[0]}' (skor={match[1]:.1f})" if match else "aday yok"
+            print(f"run_scout: '{query}' icin guvenilir isim eslesmesi bulunamadi "
+                  f"(esik={NAME_MATCH_SCORE_THRESHOLD}, en iyi: {best}) - aday dusuruldu")
+            continue
+
+        matched_name, score, idx = match
+        row = value_residuals_df.iloc[idx]
+        entry = {
+            "player_name": row["player_name"],
+            "position": c.get("position", row.get("position")),
+            "gerekce": c.get("gerekce", ""),
+        }
+        entry[perf_col] = row[perf_col] if perf_col in row.index else None
+        for col in _BACKFILL_COLUMNS:
+            entry[col] = row[col] if col in row.index else None
+        backfilled.append(entry)
+
+    return backfilled
+
+
+def _finish(resp, state: dict) -> list:
+    """LLM'in son (arac cagirmayan) yanitini JSON aday listesine parse eder,
+    ardindan HER sayisal/kategorik alani (LLM'in JSON'unda ASLA bulunmamasi
+    gereken degerler - bkz. SYSTEM ve run_scout prompt'u) tool ciktisindan
+    geri doldurur. LLM'in JSON'u istenmeden sayi icerse bile bu sayilar
+    _backfill_from_value_residuals icinde ATILIP tool ciktisiyle degistirilir
+    (perf_col/entry[col] atamalari LLM'in olasi degerlerinin UZERINE yazar)."""
+    raw_candidates = _parse_candidates_json(_final_text(resp))
+    perf_col = state.get("value_residuals_perf_col", "npxg_per90")
+    return _backfill_from_value_residuals(raw_candidates, state.get("value_residuals_df"), perf_col)
+
+
 def run_scout(state: dict, question: str) -> list:
     """Explorer'daki run_explorer ile ayni tool-use dongusunu (MAX_TOOL_CALLS
     sinirli) kullanir, ama son (arac cagirmayan) LLM yanitini serbest metin
@@ -157,8 +246,18 @@ def run_scout(state: dict, question: str) -> list:
     doner - ilk kullanici mesajina bu bicim talimati eklenir, boylece LLM'in
     dogal 'artik arac cagirmiyorum' yanit turu zaten JSON olur.
 
+    KRITIK: LLM'in JSON'u SADECE player_name, position ve gerekce (kisa metin
+    aciklama) icermelidir - hicbir sayisal/kategorik alan (npxg_per90,
+    value_residual, market_value_in_eur, league, percentile vb.) istenmez,
+    cunku LLM bunlari yanlis aktarabilir (ampirik olarak gozlemlendi: bir
+    onceki calistirmada LLM percentile degerini ham deger sanip yazmisti).
+    Bu alanlar _finish() icinde run_value_residuals aracinin EN SON
+    DONDURDUGU DataFrame'den player_name eslestirmesiyle GERI DOLDURULUR
+    (bkz. _backfill_from_value_residuals).
+
     state: bu cagriya ozel bos/gecici bir sozluk (load_matched_pool burada
-    aktif DataFrame'i 'df' anahtarina yazar) - agent'lar arasi paylasilmaz.
+    aktif DataFrame'i 'df' anahtarina, run_value_residuals ise backfill
+    kaynagini 'value_residuals_df'e yazar) - agent'lar arasi paylasilmaz.
 
     MAX_TOOL_CALLS turunde hala arac cagirmaya devam ediyorsa (nadiren), araclari
     kapatip (tools olmadan) bir son tur ile zorla JSON yanit istenir - boylece
@@ -168,8 +267,12 @@ def run_scout(state: dict, question: str) -> list:
     prompt = (
         f"{question}\n\n"
         "Arac cagirmayi bitirdiginde SADECE (baska hicbir aciklama/metin eklemeden) "
-        "secilen adaylari, her biri en az player_name, position, value_residual, "
-        "npxg_per90, market_value_in_eur alanlarini iceren bir JSON LISTESI olarak yaz."
+        "secilen adaylari bir JSON LISTESI olarak yaz. HER adayda SADECE su alanlar "
+        "olsun: player_name (arac ciktisindaki TAM/DOGRU isim), position, gerekce "
+        "(neden secildigine dair kisa bir metin). BASKA HICBIR ALAN (sayisal veya "
+        "degil) YAZMA - ozellikle npxg_per90, value_residual, market_value_in_eur, "
+        "league, percentile gibi degerleri YAZMA; bunlar sistem tarafindan otomatik "
+        "doldurulacak."
     )
     messages = [{"role": "user", "content": prompt}]
 
@@ -182,7 +285,7 @@ def run_scout(state: dict, question: str) -> list:
             messages=messages,
         )
         if resp.stop_reason != "tool_use":
-            return _parse_candidates_json(_final_text(resp))
+            return _finish(resp, state)
 
         messages.append({"role": "assistant", "content": resp.content})
         results = []
@@ -203,4 +306,4 @@ def run_scout(state: dict, question: str) -> list:
         system=SYSTEM,
         messages=messages,
     )
-    return _parse_candidates_json(_final_text(resp))
+    return _finish(resp, state)
