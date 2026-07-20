@@ -1,10 +1,10 @@
 """Faz D LangGraph iskeleti: Kaşif -> Scout -> Eleştirmen -> Yazar akışının
 state tanımı ve yönlendirme mantığı.
 
-Bu aşamada yalnızca Kaşif (explorer) gerçek LLM çağrısı yapar (zaten çalışan
-run_explorer); Scout/Eleştirmen/Yazar node'ları henüz STUB'tır (deterministik,
-LLM'siz) - graf kablolaması ve revizyon döngüsü böylece gerçek API çağrısı
-olmadan test edilebilir. Gerçek LLM node'ları bir sonraki görevde bağlanacak.
+Kaşif (explorer) ve Scout gerçek LLM çağrısı yapar (run_explorer, run_scout);
+Eleştirmen/Yazar node'ları henüz STUB'tır (deterministik, LLM'siz) - graf
+kablolaması ve revizyon döngüsü testlerde run_explorer/run_scout monkeypatch'iyle
+gerçek API çağrısı olmadan doğrulanır (bkz. tests/test_graph.py).
 """
 from typing import TypedDict
 
@@ -13,6 +13,7 @@ from langgraph.graph import StateGraph, END
 from src import config
 from src.tools import data_tools
 from src.agents.explorer import run_explorer
+from src.agents.scout import run_scout
 
 
 class ScoutState(TypedDict):
@@ -37,7 +38,9 @@ def explorer_node(state: ScoutState) -> dict:
 
 
 def scout_node(state: ScoutState) -> dict:
-    """Scout (STUB): sabit/sahte bir aday listesi doldurur.
+    """Scout: gerçek run_scout'u (src/agents/scout.py) çağırır - tool-use ile
+    multi_league_1516_matched.parquet üzerinde deger artığı analizi yapıp
+    yapılandırılmış (JSON) aday listesi döner.
 
     Revizyon sayacı burada artırılır: route_after_critic revizyon için "scout"a
     dönmeye karar verdiğinde, bu düğüm yeniden çalışır. LangGraph koşullu
@@ -53,10 +56,7 @@ def scout_node(state: ScoutState) -> dict:
     çalışan karşılığıdır."""
     is_revision = bool(state.get("candidates"))
     revision_count = state.get("revision_count", 0) + (1 if is_revision else 0)
-    candidates = [
-        {"player_name": "Test Oyuncu A", "league": "ES1", "value_residual": -1.50},
-        {"player_name": "Test Oyuncu B", "league": "GB1", "value_residual": -1.20},
-    ]
+    candidates = run_scout(state, state["question"])
     return {"candidates": candidates, "revision_count": revision_count}
 
 
@@ -78,11 +78,17 @@ def critic_node(state: ScoutState) -> dict:
 
 
 def writer_node(state: ScoutState) -> dict:
-    """Yazar (STUB): candidates + critic_notes'tan basit bir rapor stringi üretir."""
+    """Yazar (STUB): candidates + critic_notes'tan basit bir rapor stringi üretir.
+
+    .get() ile defansif okunur: gerçek Scout'un (run_scout) JSON çıktısı en az
+    player_name/position/value_residual/npxg_per90/market_value_in_eur
+    alanlarını garanti eder ('league' garanti değildir), bu yüzden doğrudan
+    dict indexleme yerine eksik alanlarda KeyError fırlatmayan .get() kullanılır."""
     candidates = state.get("candidates", [])
     if candidates:
         satirlar = "\n".join(
-            f"- {c['player_name']} ({c['league']}): value_residual={c['value_residual']}"
+            f"- {c.get('player_name', '?')} ({c.get('league', c.get('position', '?'))}): "
+            f"value_residual={c.get('value_residual', '?')}"
             for c in candidates
         )
     else:

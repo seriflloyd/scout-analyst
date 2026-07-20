@@ -1,21 +1,33 @@
-"""Faz D LangGraph iskeleti testleri: STUB node'larla (gerçek API çağrısı yok,
-hızlı) state akışı ve revizyon döngüsünün sonlanması doğrulanır."""
+"""Faz D LangGraph iskeleti testleri: Kaşif/Scout monkeypatch ile sahtelenir
+(gerçek API çağrısı yok, hızlı), Eleştirmen/Yazar zaten stub - state akışı ve
+revizyon döngüsünün sonlanması doğrulanır."""
 import pandas as pd
 import pytest
 
 from src import config, graph
 
 
+_STUB_CANDIDATES = [
+    {"player_name": "Test Oyuncu A", "league": "ES1", "position": "Attack",
+     "value_residual": -1.50, "npxg_per90": 0.40, "market_value_in_eur": 1_000_000},
+    {"player_name": "Test Oyuncu B", "league": "GB1", "position": "Midfield",
+     "value_residual": -1.20, "npxg_per90": 0.30, "market_value_in_eur": 2_000_000},
+]
+
+
 @pytest.fixture
-def stubbed_explorer(monkeypatch):
-    """Kaşif node'unun gerçek LLM çağrısını ve ağır appearances.csv okumasını
-    monkeypatch ile atlar - graf iskeleti testleri hızlı ve ağdan bağımsız
-    kalır (Scout/Eleştirmen/Yazar zaten stub)."""
+def stubbed_agents(monkeypatch):
+    """Kaşif ve Scout node'larının gerçek LLM çağrısını (run_explorer, run_scout)
+    ve ağır appearances.csv okumasını monkeypatch ile atlar - graf iskeleti
+    testleri hızlı ve ağdan bağımsız kalır (Eleştirmen/Yazar zaten stub).
+    Scout artık gerçek bir agent (src/agents/scout.py) olduğundan, Explorer'ı
+    sahtelediğimiz gibi ayrı bir monkeypatch ile sahtelenir."""
     monkeypatch.setattr(graph, "run_explorer", lambda state, question: "sahte kesif notu")
     monkeypatch.setattr(graph.data_tools, "load_appearances", lambda *a, **k: pd.DataFrame())
+    monkeypatch.setattr(graph, "run_scout", lambda state, question: _STUB_CANDIDATES)
 
 
-def test_normal_flow_threads_state_explorer_to_writer(stubbed_explorer):
+def test_normal_flow_threads_state_explorer_to_writer(stubbed_agents):
     """explorer->scout->critic->...->writer boyunca state'in her düğümden doğru
     aktığını doğrular: Kaşif notu, Scout adayları, Eleştirmen kararı ve Yazar
     raporu nihai state'te dolu olmalı."""
@@ -34,7 +46,7 @@ def test_normal_flow_threads_state_explorer_to_writer(stubbed_explorer):
     assert "scout" in visited and "critic" in visited
 
 
-def test_revision_loop_terminates_at_max_revisions(stubbed_explorer):
+def test_revision_loop_terminates_at_max_revisions(stubbed_agents):
     """Eleştirmen stub'ı revision_count < MAX_REVISIONS iken REDDET döndürür;
     döngü sonsuza gitmemeli - revision_count MAX_REVISIONS'a ulaşınca Eleştirmen
     zorla ONAYLA'ya geçip Yazar'a gitmeli."""
@@ -51,7 +63,7 @@ def test_revision_loop_terminates_at_max_revisions(stubbed_explorer):
     assert visited.count("writer") == 1
 
 
-def test_final_state_report_is_populated(stubbed_explorer):
+def test_final_state_report_is_populated(stubbed_agents):
     """Nihai state'te report alanı boş olmamalı ve rapor içeriği aday bilgisini
     taşımalı."""
     final = graph.app.invoke({"question": "soru"})
