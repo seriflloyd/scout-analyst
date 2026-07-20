@@ -99,8 +99,8 @@ def test_load_multi_league_events_combines_multiple_competitions(monkeypatch):
     her ikisinin mac verisini tek bir events_df/lineups_df'te dogru birlestirmeli
     (hicbir mac kaybolmamali, hicbir mac tekrarlanmamali)."""
     fake_matches = {
-        (1, 100): pd.DataFrame({"match_id": [11, 12]}),
-        (2, 200): pd.DataFrame({"match_id": [21]}),
+        (1, 100): pd.DataFrame({"match_id": [11, 12], "competition_name": ["Lig A", "Lig A"]}),
+        (2, 200): pd.DataFrame({"match_id": [21], "competition_name": ["Lig B"]}),
     }
     fake_events = {
         11: pd.DataFrame({"match_id": [11], "type": ["Shot"]}),
@@ -128,6 +128,29 @@ def test_load_multi_league_events_combines_multiple_competitions(monkeypatch):
     assert sorted(lineups_df["match_id"].tolist()) == [11, 12, 21]
     assert len(events_df) == 3
     assert len(lineups_df) == 3
+
+    events_league = events_df.set_index("match_id")["league"]
+    assert events_league[11] == "Lig A"
+    assert events_league[12] == "Lig A"
+    assert events_league[21] == "Lig B"
+    lineups_league = lineups_df.set_index("match_id")["league"]
+    assert lineups_league[11] == "Lig A"
+    assert lineups_league[21] == "Lig B"
+
+
+def test_get_player_leagues_picks_most_played_league():
+    """Bir oyuncu (player_id=1) Lig A'da 2 mac, Lig B'de 1 mac oynamissa
+    (sezon ici transfer/loan senaryosu), en sik oynadigi Lig A donmeli. Tek
+    ligde oynayan bir oyuncu (player_id=2) o ligle esleşmeli."""
+    lineups_df = pd.DataFrame({
+        "player_id": [1, 1, 1, 2],
+        "match_id": [101, 102, 201, 301],
+        "league": ["Lig A", "Lig A", "Lig B", "Lig B"],
+    })
+
+    leagues = event_tools.get_player_leagues(lineups_df)
+
+    assert leagues == {1: "Lig A", 2: "Lig B"}
 
 
 def test_get_primary_position_group_uses_minutes_weighted_majority():

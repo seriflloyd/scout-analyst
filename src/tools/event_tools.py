@@ -131,22 +131,51 @@ def load_multi_league_events(competitions: list, events_cache_dir: str = "data/r
     icin sb.matches() ile mac listesi cekilir; StatsBomb match_id'leri tum
     liglerde global olarak benzersiz oldugundan cakisma/tekrar riski yoktur.
 
+    Her macin tum event ve lineup satirlarina, sb.matches() ciktisindaki
+    'competition_name' degeri (orn. 'La Liga', 'Premier League') 'league'
+    sutunu olarak eklenir - boylece birlesik veride hangi satirin hangi ligden
+    geldigi ayirt edilebilir (bkz. get_player_leagues()).
+
     Donus: (events_df, lineups_df) - verilen tum lig/sezonlarin mac event ve
-    lineup satirlarinin concat edilmis hali. compute_player_minutes,
-    compute_npxg_per90, compute_goals_per90 gibi asagi-akis fonksiyonlari
-    tek-lig cagrisindaki gibi degismeden calisir (bu fonksiyonlar zaten
-    events_df/lineups_df'in hangi ligden geldigine bakmaz)."""
+    lineup satirlarinin concat edilmis hali (ikisinde de 'league' sutunu var).
+    compute_player_minutes, compute_npxg_per90, compute_goals_per90 gibi
+    asagi-akis fonksiyonlari tek-lig cagrisindaki gibi degismeden calisir (bu
+    fonksiyonlar zaten events_df/lineups_df'in hangi ligden geldigine
+    bakmaz - fazladan 'league' sutunu onlari etkilemez)."""
     all_events = []
     all_lineups = []
     for competition_id, season_id in competitions:
         matches = sb.matches(competition_id=competition_id, season_id=season_id)
-        for match_id in matches["match_id"]:
-            all_events.append(get_events_cached(match_id, cache_dir=events_cache_dir))
-            all_lineups.append(get_lineups_cached(match_id, cache_dir=lineups_cache_dir))
+        for _, match_row in matches.iterrows():
+            match_id = match_row["match_id"]
+            league = match_row["competition_name"]
+            all_events.append(get_events_cached(match_id, cache_dir=events_cache_dir).assign(league=league))
+            all_lineups.append(get_lineups_cached(match_id, cache_dir=lineups_cache_dir).assign(league=league))
 
     events_df = pd.concat(all_events, ignore_index=True)
     lineups_df = pd.concat(all_lineups, ignore_index=True)
     return events_df, lineups_df
+
+
+def get_player_leagues(lineups_df: pd.DataFrame) -> dict:
+    """lineups_df (load_multi_league_events ciktisi, 'league' sutunu icermeli)
+    icinden oyuncu basina EN COK MAC oynadigi ligi cikarir - bir oyuncu ayni
+    sezon icinde (loan/transfer) birden fazla ligde oynamis olsa bile en sik
+    gorulen lig alinir (get_primary_position_group'un dakika-agirlikli
+    secimine benzer bir 'coklu-lig' kenar durumu koruma yontemi, ama burada
+    dakika yerine mac sayisi kullanilir - segment_minutes hesaplamak icin
+    events_df gerekir, bu fonksiyon sadece lineups_df alir).
+
+    Donus: {player_id: lig_adi} sozlugu (lig_adi = 'league' sutunundaki deger,
+    orn. StatsBomb competition_name) - match_tools.build_multi_league_value_pool()'a
+    player_leagues olarak aktarilir."""
+    counts = (
+        lineups_df.groupby(["player_id", "league"])["match_id"]
+        .nunique()
+        .reset_index()
+    )
+    idx = counts.groupby("player_id")["match_id"].idxmax()
+    return counts.loc[idx].set_index("player_id")["league"].to_dict()
 
 
 def compute_player_minutes(lineups_df: pd.DataFrame, events_df: pd.DataFrame) -> pd.DataFrame:

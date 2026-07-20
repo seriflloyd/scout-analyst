@@ -146,36 +146,18 @@ def demote_ambiguous_matches(match_result: pd.DataFrame) -> pd.DataFrame:
     return d
 
 
-def build_statsbomb_value_pool(npxg_df: pd.DataFrame, players: pd.DataFrame, valuations: pd.DataFrame,
-                               competition_code: str, season_start: str, season_end: str,
-                               min_market_value: float, score_threshold: float = 90.0,
-                               nicknames: dict = None, min_minutes: int = config.MIN_MINUTES):
-    """StatsBomb npxG/90 sonuclarini (npxg_df: player_name, npxg, minutes, npxg_per90)
-    Transfermarkt oyuncu + piyasa degeri verisiyle isim tabanli fuzzy match ile
-    birlestirir.
+def _match_league_to_transfermarkt(npxg_df: pd.DataFrame, players: pd.DataFrame, valuations: pd.DataFrame,
+                                    competition_code: str, season_start: str, season_end: str,
+                                    min_market_value: float, score_threshold: float,
+                                    nicknames: dict) -> tuple:
+    """build_statsbomb_value_pool ve build_multi_league_value_pool arasinda
+    paylasilan ortak hesap: TEK bir lig icin Transfermarkt aday havuzunu kurar,
+    npxg_df'teki (o lige ait) oyunculari (nickname destekli) fuzzy_match_players
+    ile bu havuza baglar, belirsiz eslesmeleri eler.
 
-    nicknames (opsiyonel): {statsbomb_player_id: nickname} sozlugu (bkz.
-    get_player_nicknames()) - verilirse fuzzy_match_players'a alt isim olarak
-    aktarilir, ortak soyisim catismalarini azaltir (bkz. fuzzy_match_players
-    docstring'i).
-
-    min_minutes: eslesen sonuca build_eligible_pool() ile ayni kucuk-orneklem
-    esigi (apply_minutes_threshold(), varsayilan config.MIN_MINUTES) uygulanir -
-    bu olmadan dusuk dakikali (orn. 300-400 dk) oyuncular value_residuals()'a
-    girip gurultulu, guvenilmez artiklarla "en degerinin altinda" listesine
-    sizabiliyordu (ampirik olarak dogrulandi: N=245 La Liga 2015/16 calismasinda
-    bkz. reports/npxg_vs_goals_faz_b.md).
-
-    Donus: (matched_df, unmatched_df).
-    matched_df: value_residuals() icin gerekli sutunlari icerir (npxg_per90,
-    minutes, position, date_of_birth, league, season_end, market_value_in_eur).
-    unmatched_df: eslesemeyen StatsBomb oyuncularini (en iyi adayi ve skoruyla,
-    tanisal amacli) listeler - eslesmeme nedeni uc turlu olabilir: (1) adayin
-    skoru esigin altinda kaldi, (2) o oyuncu aday havuzunda (o sezon o ligde
-    kayitli piyasa degeri) hic yok, (3) demote_ambiguous_matches() tarafindan
-    belirsiz bulundu (ayni Transfermarkt kaydina birden fazla farkli StatsBomb
-    oyuncusu eslesti - hangisinin dogru oldugu skor uzerinden ayirt edilemedi).
-    """
+    Donus: (matched_df, unmatched_df) - matched_df'te 'league' sutunu
+    competition_code'u tasir; minutes esigi burada UYGULANMAZ (cagiran
+    fonksiyon uygular)."""
     candidates = build_transfermarkt_candidates(
         players, valuations, competition_code, season_start, season_end, min_market_value
     )
@@ -209,9 +191,113 @@ def build_statsbomb_value_pool(npxg_df: pd.DataFrame, players: pd.DataFrame, val
     matched["season_end"] = pd.Timestamp(season_end)
     matched = matched.reset_index(drop=True)
 
+    return matched, unmatched
+
+
+def build_statsbomb_value_pool(npxg_df: pd.DataFrame, players: pd.DataFrame, valuations: pd.DataFrame,
+                               competition_code: str, season_start: str, season_end: str,
+                               min_market_value: float, score_threshold: float = 90.0,
+                               nicknames: dict = None, min_minutes: int = config.MIN_MINUTES):
+    """StatsBomb npxG/90 sonuclarini (npxg_df: player_name, npxg, minutes, npxg_per90)
+    Transfermarkt oyuncu + piyasa degeri verisiyle isim tabanli fuzzy match ile
+    birlestirir.
+
+    nicknames (opsiyonel): {statsbomb_player_id: nickname} sozlugu (bkz.
+    get_player_nicknames()) - verilirse fuzzy_match_players'a alt isim olarak
+    aktarilir, ortak soyisim catismalarini azaltir (bkz. fuzzy_match_players
+    docstring'i).
+
+    min_minutes: eslesen sonuca build_eligible_pool() ile ayni kucuk-orneklem
+    esigi (apply_minutes_threshold(), varsayilan config.MIN_MINUTES) uygulanir -
+    bu olmadan dusuk dakikali (orn. 300-400 dk) oyuncular value_residuals()'a
+    girip gurultulu, guvenilmez artiklarla "en degerinin altinda" listesine
+    sizabiliyordu (ampirik olarak dogrulandi: N=245 La Liga 2015/16 calismasinda
+    bkz. reports/npxg_vs_goals_faz_b.md).
+
+    Donus: (matched_df, unmatched_df).
+    matched_df: value_residuals() icin gerekli sutunlari icerir (npxg_per90,
+    minutes, position, date_of_birth, league, season_end, market_value_in_eur).
+    unmatched_df: eslesemeyen StatsBomb oyuncularini (en iyi adayi ve skoruyla,
+    tanisal amacli) listeler - eslesmeme nedeni uc turlu olabilir: (1) adayin
+    skoru esigin altinda kaldi, (2) o oyuncu aday havuzunda (o sezon o ligde
+    kayitli piyasa degeri) hic yok, (3) demote_ambiguous_matches() tarafindan
+    belirsiz bulundu (ayni Transfermarkt kaydina birden fazla farkli StatsBomb
+    oyuncusu eslesti - hangisinin dogru oldugu skor uzerinden ayirt edilemedi).
+    """
+    matched, unmatched = _match_league_to_transfermarkt(
+        npxg_df, players, valuations, competition_code, season_start, season_end,
+        min_market_value, score_threshold, nicknames,
+    )
+
     below_threshold = int((matched["minutes"] < min_minutes).sum())
     print(f"build_statsbomb_value_pool: dakika esigi (>={min_minutes}) {below_threshold} satiri eleyecek "
           f"({len(matched)} -> {len(matched) - below_threshold})")
     matched = apply_minutes_threshold(matched, min_minutes)
 
     return matched, unmatched
+
+
+def build_multi_league_value_pool(npxg_df: pd.DataFrame, player_leagues: dict, league_codes: dict,
+                                  players: pd.DataFrame, valuations: pd.DataFrame,
+                                  season_start: str, season_end: str, min_market_value: float,
+                                  score_threshold: float = 90.0, nicknames: dict = None,
+                                  min_minutes: int = config.MIN_MINUTES) -> tuple:
+    """build_statsbomb_value_pool()'un coklu-lig genellemesi. build_statsbomb_value_pool
+    TEK bir competition_code/season penceresi varsayar (tek lig icin tasarlanmistir);
+    bu fonksiyon npxg_df'teki oyunculari player_leagues sozlugu araciligiyla HANGI
+    lige ait olduklarina gore gruplar, HER lig icin AYRI bir Transfermarkt aday
+    havuzu (kendi league_codes[lig]'i ile) kurup AYRI bir fuzzy_match_players
+    calistirir - cunku ayni StatsBomb ismi farkli liglerdeki farkli Transfermarkt
+    kayitlariyla yanlislikla eslesmemeli (lig sinirlari isim uzayini da ayirir,
+    orn. iki farkli ulkede ayni isimli oyuncular). Sonra hepsini 'league'
+    sutunuyla (Transfermarkt competition_code, orn. 'ES1') etiketlenmis TEK bir
+    DataFrame'de birlestirir.
+
+    player_leagues: {statsbomb_player_id: lig_adi} sozlugu - npxg_df'teki her
+    oyuncunun hangi lige ait oldugunu belirler (bkz. event_tools.get_player_leagues(),
+    lig_adi = StatsBomb competition_name, orn. 'La Liga').
+    league_codes: {lig_adi: transfermarkt_competition_code} sozlugu (orn.
+    {'La Liga': 'ES1', 'Premier League': 'GB1', 'Serie A': 'IT1', 'Ligue 1': 'FR1'}) -
+    league_codes'un anahtarlari player_leagues'in degerleriyle esleşmelidir.
+
+    nicknames (opsiyonel): {statsbomb_player_id: nickname} - TUM liglerdeki
+    oyunculari kapsayan GLOBAL bir sozluk olabilir (bkz. get_player_nicknames());
+    her lig icin fuzzy_match_players cagrisina otomatik olarak sadece o ligin
+    oyuncularina ait alt isimler filtrelenerek aktarilir.
+
+    min_minutes: apply_minutes_threshold() TUM ligler birlestirildikten SONRA,
+    TEK seferde uygulanir (lig bazinda degil) - build_statsbomb_value_pool ile
+    ayni esik davranisi.
+
+    Donus: (matched_df, unmatched_df) - build_statsbomb_value_pool ile ayni
+    sekil/sutunlar, ek olarak matched_df'te birden fazla farkli 'league'
+    (competition_code) degeri bulunur."""
+    matched_parts = []
+    unmatched_parts = []
+
+    for league_name, competition_code in league_codes.items():
+        league_player_ids = {pid for pid, lg in player_leagues.items() if lg == league_name}
+        league_npxg = npxg_df[npxg_df["player_id"].isin(league_player_ids)].copy()
+        if league_npxg.empty:
+            continue
+
+        matched, unmatched = _match_league_to_transfermarkt(
+            league_npxg, players, valuations, competition_code, season_start, season_end,
+            min_market_value, score_threshold, nicknames,
+        )
+        print(f"build_multi_league_value_pool: {league_name} ({competition_code}) - "
+              f"{len(league_npxg)} aday, {len(matched)} eslesti "
+              f"(%{100 * len(matched) / len(league_npxg):.1f})")
+
+        matched_parts.append(matched)
+        unmatched_parts.append(unmatched)
+
+    matched_all = pd.concat(matched_parts, ignore_index=True)
+    unmatched_all = pd.concat(unmatched_parts, ignore_index=True)
+
+    below_threshold = int((matched_all["minutes"] < min_minutes).sum())
+    print(f"build_multi_league_value_pool: dakika esigi (>={min_minutes}) {below_threshold} satiri eleyecek "
+          f"({len(matched_all)} -> {len(matched_all) - below_threshold})")
+    matched_all = apply_minutes_threshold(matched_all, min_minutes)
+
+    return matched_all.reset_index(drop=True), unmatched_all.reset_index(drop=True)

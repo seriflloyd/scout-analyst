@@ -196,3 +196,55 @@ def test_build_statsbomb_value_pool_applies_minutes_threshold():
     assert len(matched) == 1
     assert matched.iloc[0]["player_name"] == "Luis Alberto Suárez Díaz"
     assert "Karim Benzema" not in matched["player_name"].values
+
+
+def test_build_multi_league_value_pool_isolates_leagues_and_applies_threshold():
+    """Iki farkli StatsBomb oyuncusu (statsbomb_player_id=101, 102) AYNI tam
+    ada ('Ali Yilmaz') sahip ama farkli liglerde oynuyor - Transfermarkt'ta da
+    ayni isimde iki FARKLI kayit var (player_id=1 Lig A'da, player_id=2 Lig
+    B'de). Lig-bazli izolasyon olmadan (tum adaylar tek havuzda fuzzy-match
+    edilseydi) bu isim carpismasi demote_ambiguous_matches tarafindan HER
+    ikisini de reddederdi; player_leagues/league_codes ile lig-bazli ayri
+    eslesme bu carpismayi onlemeli - her StatsBomb oyuncusu SADECE kendi
+    liginin aday havuzuna eslesmeli. Ayrica esik-alti bir ucuncu oyuncu
+    (statsbomb_player_id=103, Lig A, 300 dk) birlesik sonuctan dusmeli."""
+    npxg_df = pd.DataFrame({
+        "player_id": [101, 102, 103],
+        "player_name": ["Ali Yilmaz", "Ali Yilmaz", "Kucuk Dakikali Oyuncu"],
+        "npxg": [10.0, 8.0, 1.0],
+        "minutes": [1800.0, 1700.0, 300.0],
+        "npxg_per90": [0.5, 0.42, 0.3],
+    })
+    player_leagues = {101: "Lig A", 102: "Lig B", 103: "Lig A"}
+    league_codes = {"Lig A": "XX1", "Lig B": "YY1"}
+
+    players = pd.DataFrame({
+        "player_id": [1, 2, 3],
+        "name": ["Ali Yilmaz", "Ali Yilmaz", "Kucuk Dakikali Oyuncu"],
+        "date_of_birth": ["1990-01-01", "1991-01-01", "1995-01-01"],
+        "position": ["Attack", "Attack", "Midfield"],
+        "sub_position": ["Centre-Forward", "Centre-Forward", "Central Midfield"],
+    })
+    valuations = pd.DataFrame({
+        "player_id": [1, 2, 3],
+        "date": ["2016-01-01", "2016-01-01", "2016-01-01"],
+        "market_value_in_eur": [50_000_000, 20_000_000, 5_000_000],
+        "player_club_domestic_competition_id": ["XX1", "YY1", "XX1"],
+    })
+
+    matched, unmatched = match_tools.build_multi_league_value_pool(
+        npxg_df, player_leagues, league_codes, players, valuations,
+        season_start="2015-07-01", season_end="2016-06-30", min_market_value=100_000,
+        min_minutes=900,
+    )
+
+    assert len(matched) == 2
+    assert set(matched["statsbomb_player_id"]) == {101, 102}
+
+    row_101 = matched[matched["statsbomb_player_id"] == 101].iloc[0]
+    assert row_101["league"] == "XX1"
+    assert row_101["market_value_in_eur"] == 50_000_000
+
+    row_102 = matched[matched["statsbomb_player_id"] == 102].iloc[0]
+    assert row_102["league"] == "YY1"
+    assert row_102["market_value_in_eur"] == 20_000_000
