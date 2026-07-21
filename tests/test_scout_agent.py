@@ -7,6 +7,7 @@ import itertools
 import numpy as np
 import pandas as pd
 
+from src import config
 from src.agents import scout
 
 
@@ -200,3 +201,33 @@ def test_backfill_tolerates_slightly_misspelled_names():
 
     assert len(result) == 1
     assert result[0]["player_name"] == target["player_name"]
+
+
+def test_run_value_residuals_tool_schema_has_no_perf_col():
+    """run_value_residuals'in TOOLS semasinda 'perf_col' (veya baska herhangi
+    bir) parametre BULUNMAMALI - LLM'in secebilecegi bir sey olmamali, model
+    Faz B-C'de dogrulanan config.DEFAULT_PERF_COL'a deterministik olarak
+    sabitlenmelidir."""
+    tool_def = next(t for t in scout.TOOLS if t["name"] == "run_value_residuals")
+
+    assert tool_def["input_schema"]["properties"] == {}
+    assert "perf_col" not in tool_def["input_schema"]["properties"]
+    assert tool_def["input_schema"]["required"] == []
+
+
+def test_run_tool_run_value_residuals_ignores_perf_col_even_if_supplied():
+    """Kotu niyetli/hatali bir tool_use LLM ciktisinda (semada olmamasina
+    ragmen) yine de bir 'perf_col' argumani gelirse, _run_tool bunu YOKSAYMALI
+    ve her zaman config.DEFAULT_PERF_COL ile calismalidir - deterministik
+    davranis, LLM'in girdisine bagli olmamali."""
+    state = {"df": _synthetic_pool(n=20)}
+
+    out = scout._run_tool("run_value_residuals", {"perf_col": "npxg_per90_pct"}, state)
+
+    assert "hata" not in out
+    assert config.DEFAULT_PERF_COL == "npxg_per90"
+    assert state["value_residuals_perf_col"] == config.DEFAULT_PERF_COL
+    # 'npxg_per90_pct' sutunu hic olusturulmadigindan (percentile_by_group
+    # cagrilmadi), eger perf_col yoksayilmasaydi value_residuals KeyError
+    # verirdi - hatasiz donmesi zaten sabit npxg_per90 kullanildigini kanitlar.
+    assert "npxg_per90" in state["value_residuals_df"].columns

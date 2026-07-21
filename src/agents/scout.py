@@ -19,19 +19,25 @@ NAME_MATCH_SCORE_THRESHOLD = 85.0
 
 # _backfill_from_value_residuals()'da LLM'in JSON'undan degil, run_value_residuals
 # aracinin son DataFrame'inden geri doldurulan sutunlar - bkz. run_scout docstring'i.
-# 'npxg_per90' HER ZAMAN geri doldurulur (LLM run_value_residuals'i farkli bir
-# perf_col ile - orn. 'npxg_per90_pct' - calistirmis olsa bile referans ham
-# performans degeri kaybolmasin diye); perf_col ayrica (kendi adiyla) eklenir.
+# 'npxg_per90' HER ZAMAN geri doldurulur - run_value_residuals artik LLM'e perf_col
+# secme sansi vermez (TOOLS semasinda yok, config.DEFAULT_PERF_COL'a sabitlenmistir),
+# bu yuzden entry[perf_col] atamasi zaten hep 'npxg_per90'in kendisidir; yine de
+# ayri sabit bir kolon olarak tutulur ki config.DEFAULT_PERF_COL ileride degisse
+# bile ham npxg_per90 referansi kaybolmasin.
 _BACKFILL_COLUMNS = ["npxg_per90", "value_residual", "market_value_in_eur", "league", "dusuk_sinyal_guvenilirligi"]
 
 SYSTEM = (
     "Sen bir futbol scoutusun. Elindeki araclarla data/processed/"
     "multi_league_1516_matched.parquet'teki oyunculardan degerinin altinda "
     "olanlari bul. Hesap yapma; sadece arac ciktilari uzerinden konus. Karar "
-    "sirasi: once percentile_by_group ile performansi bagla, sonra "
-    "value_residuals ile deger artigini hesapla, en negatif 5-10 adayi sec, "
-    "ilgi cekici olanlar icin similar_players ile benzer oyuncu bul. Turkce, "
-    "kisa ve net yaz.\n\n"
+    "sirasi: once (istersen) percentile_by_group ile performansi grup-ici "
+    "baglama otur (bu SADECE teshis/rapor amaclidir - 'bu oyuncu pozisyonunda "
+    "kacinci yuzdelikte' gibi bir baglam sunar, Yazar/Elestirmen'e gosterilecek "
+    "ek bilgidir; value_residuals'in GIRDISI DEGILDIR ve olamaz - value_residuals "
+    "her zaman ham performans metrigiyle, sabit ve degistirilemez sekilde "
+    "calisir), sonra value_residuals ile deger artigini hesapla, en negatif "
+    "5-10 adayi sec, ilgi cekici olanlar icin similar_players ile benzer "
+    "oyuncu bul. Turkce, kisa ve net yaz.\n\n"
     "ONEMLI: Nihai JSON yanitinda HICBIR sayisal deger (npxg_per90, "
     "value_residual, market_value_in_eur, percentile vb.) YAZMA - bu degerleri "
     "hafizandan/gorduklerinden aktarirsan yanlis hatirlayabilirsin (orn. "
@@ -65,17 +71,14 @@ TOOLS = [
     },
     {
         "name": "run_value_residuals",
-        "description": "Aktif havuz uzerinde deger artigi (value_residual) regresyonunu calistirir - "
-                        "piyasa degerinin performans/yas/pozisyon/lige gore beklenenden ne kadar "
-                        "dusuk/yuksek oldugunu olcer, aktif havuzu (value_residual'a gore artan sirali) "
-                        "gunceller. N, R-squared ve en negatif (degerinin en altinda) 10 satiri dondurur.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "perf_col": {"type": "string", "description": "Performans sutunu (varsayilan 'npxg_per90')"},
-            },
-            "required": [],
-        },
+        "description": "Aktif havuz uzerinde deger artigi (value_residual) regresyonunu, "
+                        "Faz B-C'de dogrulanan SABIT modelle (ham npxg_per90 performans sutunu - "
+                        "config.DEFAULT_PERF_COL, secilemez) calistirir - piyasa degerinin "
+                        "performans/yas/pozisyon/lige gore beklenenden ne kadar dusuk/yuksek "
+                        "oldugunu olcer, aktif havuzu (value_residual'a gore artan sirali) gunceller. "
+                        "N, R-squared ve en negatif (degerinin en altinda) 10 satiri dondurur. "
+                        "Parametre almaz.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     {
         "name": "get_similar_players",
@@ -122,7 +125,10 @@ def _run_tool(name: str, args: dict, state: dict) -> dict:
         }
 
     if name == "run_value_residuals":
-        perf_col = args.get("perf_col", "npxg_per90")
+        # perf_col LLM'e birakilmaz (TOOLS semasinda yok) - args'ta yanlislikla/kotu
+        # niyetle bir 'perf_col' gelse bile YOKSAYILIR, her zaman Faz B-C'de
+        # dogrulanan config.DEFAULT_PERF_COL kullanilir (bkz. config.py notu).
+        perf_col = config.DEFAULT_PERF_COL
         try:
             df, model = scout_tools.value_residuals(state["df"], perf_col=perf_col)
         except Exception as e:
@@ -235,7 +241,7 @@ def _finish(resp, state: dict) -> list:
     _backfill_from_value_residuals icinde ATILIP tool ciktisiyle degistirilir
     (perf_col/entry[col] atamalari LLM'in olasi degerlerinin UZERINE yazar)."""
     raw_candidates = _parse_candidates_json(_final_text(resp))
-    perf_col = state.get("value_residuals_perf_col", "npxg_per90")
+    perf_col = state.get("value_residuals_perf_col", config.DEFAULT_PERF_COL)
     return _backfill_from_value_residuals(raw_candidates, state.get("value_residuals_df"), perf_col)
 
 
